@@ -170,10 +170,12 @@ class MultiOutputSparseGP:
     def predict(self, X_test):
         X_test = X_test.to(self.device)
         preds = []
+        stds = []
         for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods)):
             model.eval()
             likelihood.eval()
             with torch.no_grad(), gpytorch.settings.fast_pred_var():
                 pred = likelihood(model(X_test))
                 preds.append(pred.mean.cpu().unsqueeze(-1))
-        return torch.cat(preds, dim=-1)
+                stds.append(pred.stddev.cpu().unsqueeze(-1))
+        return torch.cat(preds, dim=-1), torch.cat(stds, dim=-1)

@@ -10,8 +10,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
 
 # Load the data
-DATADIR = '/home/mu/workspace/data/kine_rand_uniform/'
-MODELDIR = '/home/mu/workspace/src/sparse_gp_test/models/'
+DATADIR = '/home/mu/workspace/roboracer/data/kine_rand_uniform/'
+MODELDIR = '/home/mu/workspace/roboracer/src/gp-ws/models/'
 
 train_data = np.load(DATADIR + 'train_data.npz')
 train_states = train_data['train_states']
@@ -126,6 +126,6 @@ for i in range(Y_test.shape[-1]):
     plt.grid(True)
 
     plt.tight_layout()
-    plt.savefig(f"/home/mu/workspace/src/sparse_gp_test/evaluate_out/output_dim_{i}_eval.png")
+    plt.savefig(f"/home/mu/workspace/src/gp-ws/evaluate_out/output_dim_{i}_eval.png")
     plt.show()
 
