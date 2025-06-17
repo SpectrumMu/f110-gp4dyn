@@ -1,10 +1,13 @@
+from pyexpat import model
 import torch
 import numpy as np
 import pickle
-from gp_model import MultiOutputGP, MultiOutputSparseGP
+from gp_model import MultiOutputGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+
+MODEL = 'sparse'  # 'multioutput', 'sparse', or 'stochastic_variational'
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
@@ -57,8 +60,15 @@ X_train, X_test, Y_train, Y_test = train_test_split(
 # === Train model ===
 # gp_model = MultiOutputGP(X_train, Y_train, device=device)
 # gp_model.train(X_train, Y_train, training_iter=100)
-gp_model = MultiOutputSparseGP(X_train, Y_train, num_inducing=128)
-gp_model.train(num_epochs=100)
+gp_model = None
+if MODEL == 'multioutput':
+    gp_model = MultiOutputGP(X_train, Y_train, device=device)
+elif MODEL == 'sparse':
+    gp_model = MultiOutputSparseGP(X_train, Y_train, num_inducing=128, device=device)
+elif MODEL == 'stochastic_variational':
+    gp_model = MultiOutputStochasticVariationalGP(X_train, Y_train, num_inducing=128, device=device)
+# gp_model = MultiOutputSparseGP(X_train, Y_train, num_inducing=128)
+gp_model.train(num_epochs=[500,500,500,100])
 
 # === Save model ===
 with open(MODELDIR + "gp_model.pkl", "wb") as f:
@@ -73,59 +83,90 @@ print("Model saved to gp_model.pkl")
 # print("Model loaded.")
 
 # # === Predict and Evaluate ===
-Y_pred = gp_model.predict(X_test)
+Y_pred, Y_std = gp_model.predict(X_test)
+
+# === Evaluation ===
+num_outputs = Y_test.shape[-1]
+fig, axes = plt.subplots(2, num_outputs, figsize=(6 * num_outputs, 10))  # Removed sharey='row'
+
+for i in range(num_outputs):
+    y_true = Y_test[:, i].numpy()
+    y_pred = Y_pred[:, i].numpy()
+    y_uncert = Y_std[:, i].numpy()
+    error = np.abs(y_true - y_pred)
+    normalized_error = error / y_uncert
+
+    # Top row: normalized error histogram
+    ax_hist = axes[0, i] if num_outputs > 1 else axes[0]
+    ax_hist.hist(normalized_error, bins=30, alpha=0.7)
+    ax_hist.set_xlabel("Normalized Error")
+    ax_hist.set_ylabel("Count")
+    ax_hist.set_title(f"Output {i}: Norm Error Hist")
+    ax_hist.grid(True)
+
+    # Bottom row: scatter plot (absolute error vs. uncertainty)
+    ax_scatter = axes[1, i] if num_outputs > 1 else axes[1]
+    ax_scatter.scatter(y_uncert, error, alpha=0.5)
+    ax_scatter.set_xlabel("Predicted Stddev (Uncertainty)")
+    ax_scatter.set_ylabel("Absolute Error")
+    ax_scatter.set_title(f"Output {i}: Error vs Uncertainty")
+    ax_scatter.grid(True)
+
+plt.tight_layout()
+plt.savefig("/home/mu/workspace/roboracer/src/gp-ws/evaluate_out/all_outputs_norm_hist_and_scatter.png")
+plt.show()
 
 # # Evaluation: MSE
-mse_list = []
-mae_list = []
-r2_list = []
+# mse_list = []
+# mae_list = []
+# r2_list = []
 
-for i in range(Y_test.shape[-1]):
-    y_true = Y_test[:, i].numpy()
-    y_pred = Y_pred[:, i].numpy()
-    mse = mean_squared_error(y_true, y_pred)
-    mae = mean_absolute_error(y_true, y_pred)
-    r2 = r2_score(y_true, y_pred)
-    mse_list.append(mse)
-    mae_list.append(mae)
-    r2_list.append(r2)
-    print(f"Output {i}: MSE={mse:.4f}, MAE={mae:.4f}, R2={r2:.4f}")
+# for i in range(Y_test.shape[-1]):
+#     y_true = Y_test[:, i].numpy()
+#     y_pred = Y_pred[:, i].numpy()
+#     mse = mean_squared_error(y_true, y_pred)
+#     mae = mean_absolute_error(y_true, y_pred)
+#     r2 = r2_score(y_true, y_pred)
+#     mse_list.append(mse)
+#     mae_list.append(mae)
+#     r2_list.append(r2)
+#     print(f"Output {i}: MSE={mse:.4f}, MAE={mae:.4f}, R2={r2:.4f}")
 
-# Aggregate metrics
-print("\nAggregate metrics:")
-print(f"Mean MSE: {np.mean(mse_list):.4f} ± {np.std(mse_list):.4f}")
-print(f"Mean MAE: {np.mean(mae_list):.4f} ± {np.std(mae_list):.4f}")
-print(f"Mean R2:  {np.mean(r2_list):.4f} ± {np.std(r2_list):.4f}")
+# # Aggregate metrics
+# print("\nAggregate metrics:")
+# print(f"Mean MSE: {np.mean(mse_list):.4f} ± {np.std(mse_list):.4f}")
+# print(f"Mean MAE: {np.mean(mae_list):.4f} ± {np.std(mae_list):.4f}")
+# print(f"Mean R2:  {np.mean(r2_list):.4f} ± {np.std(r2_list):.4f}")
 
-# Residual analysis and scatter plots
-for i in range(Y_test.shape[-1]):
-    y_true = Y_test[:, i].numpy()
-    y_pred = Y_pred[:, i].numpy()
-    residuals = y_true - y_pred
+# # Residual analysis and scatter plots
+# for i in range(Y_test.shape[-1]):
+#     y_true = Y_test[:, i].numpy()
+#     y_pred = Y_pred[:, i].numpy()
+#     residuals = y_true - y_pred
 
-    plt.figure(figsize=(16, 4))
-    plt.subplot(1, 3, 1)
-    plt.plot(y_true, label='True')
-    plt.plot(y_pred, label='Predicted')
-    plt.title(f"Output {i}: Prediction vs True")
-    plt.legend()
-    plt.grid(True)
+#     plt.figure(figsize=(16, 4))
+#     plt.subplot(1, 3, 1)
+#     plt.plot(y_true, label='True')
+#     plt.plot(y_pred, label='Predicted')
+#     plt.title(f"Output {i}: Prediction vs True")
+#     plt.legend()
+#     plt.grid(True)
 
-    plt.subplot(1, 3, 2)
-    plt.scatter(y_true, y_pred, alpha=0.5)
-    plt.xlabel("True")
-    plt.ylabel("Predicted")
-    plt.title(f"Output {i}: Predicted vs True")
-    plt.grid(True)
+#     plt.subplot(1, 3, 2)
+#     plt.scatter(y_true, y_pred, alpha=0.5)
+#     plt.xlabel("True")
+#     plt.ylabel("Predicted")
+#     plt.title(f"Output {i}: Predicted vs True")
+#     plt.grid(True)
 
-    plt.subplot(1, 3, 3)
-    plt.hist(residuals, bins=30, alpha=0.7)
-    plt.title(f"Output {i}: Residuals")
-    plt.xlabel("Residual")
-    plt.ylabel("Count")
-    plt.grid(True)
+#     plt.subplot(1, 3, 3)
+#     plt.hist(residuals, bins=30, alpha=0.7)
+#     plt.title(f"Output {i}: Residuals")
+#     plt.xlabel("Residual")
+#     plt.ylabel("Count")
+#     plt.grid(True)
 
-    plt.tight_layout()
-    plt.savefig(f"/home/mu/workspace/src/gp-ws/evaluate_out/output_dim_{i}_eval.png")
-    plt.show()
+#     plt.tight_layout()
+#     plt.savefig(f"/home/mu/workspace/src/gp-ws/evaluate_out/output_dim_{i}_eval.png")
+#     plt.show()
 
