@@ -7,8 +7,15 @@ from gp_model import MultiOutputGP, MultiOutputSparseGP, MultiOutputStochasticVa
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.preprocessing import StandardScaler
+from linear_operator.settings import max_cg_iterations, cg_tolerance
+
+# Increase max CG iterations and adjust tolerance
+max_cg_iterations(2000)  # Increase the maximum iterations
+cg_tolerance(1e-3)       # Relax the tolerance slightly
 
 MODEL = 'multioutput'  # 'multioutput', 'sparse', or 'stochastic_variational'
+IF_NORM = True  # Whether to normalize the data
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
@@ -35,10 +42,6 @@ if np.isnan(train_controls).any() or np.isinf(train_controls).any():
     raise ValueError("NaN or Inf values found in train_controls")
 if np.isnan(train_dynamics).any() or np.isinf(train_dynamics).any():
     raise ValueError("NaN or Inf values found in train_dynamics")
-# Convert to PyTorch tensors
-train_states = torch.tensor(train_states, dtype=torch.float32)
-train_controls = torch.tensor(train_controls, dtype=torch.float32)
-train_dynamics = torch.tensor(train_dynamics, dtype=torch.float32)
 
 # Assume you only have one friction class, drop the first dim
 states = train_states[0]    # (N, 2, 4)
@@ -57,12 +60,24 @@ uk = controls[:, 0, :]   # (N, 2)
 xk1 = states[:, 1, :]    # (N, 4)
 yk = dynamics[:, 0, :]  # (N, 4)
 
-X_train = torch.cat([xk, uk], dim=-1)  # (N, 6)
+X_train = np.concatenate([xk, uk], axis=-1)  # (N, 6)
 Y_train = yk                           # (N, 4)
+
+# Normalize X_train and Y_train
+x_scaler = StandardScaler()
+y_scaler = StandardScaler()
+
+if IF_NORM:
+    X_train = x_scaler.fit_transform(X_train)
+    Y_train = y_scaler.fit_transform(Y_train)
+
+# Convert to PyTorch tensors
+X_train = torch.tensor(X_train, dtype=torch.float32)
+Y_train = torch.tensor(Y_train, dtype=torch.float32)
 
 # Split into train and test sets
 X_train, X_test, Y_train, Y_test = train_test_split(
-    X_train, Y_train, test_size=0.2, random_state=42
+    X_train, Y_train, test_size=0.5, random_state=42
 )
 
 # === Train model ===
@@ -93,7 +108,12 @@ for name, model in models.items():
 results = {}
 for name, model in models.items():
     Y_pred, Y_std = model.predict(X_test)
+    Y_pred = y_scaler.inverse_transform(Y_pred.numpy())  # Inverse transform Y_pred if normalized
+    Y_std = y_scaler.inverse_transform(Y_std.numpy())  # Inverse transform Y_std if normalized
     results[name] = (Y_pred, Y_std)
+
+Y_test = Y_test.numpy()  # Convert to numpy for evaluation
+Y_test = y_scaler.inverse_transform(Y_test)  # Inverse transform Y_test if normalized
 
 # === Evaluation: plot all models in the same figure ===
 num_outputs = Y_test.shape[-1]
@@ -104,18 +124,24 @@ for i in range(num_outputs):
     ax_hist = axes[0, i] if num_outputs > 1 else axes[0]
     ax_scatter = axes[1, i] if num_outputs > 1 else axes[1]
     for name, (Y_pred, Y_std) in results.items():
-        y_true = Y_test[:, i].numpy()
-        y_pred = Y_pred[:, i].numpy()
-        y_uncert = Y_std[:, i].numpy()
+        y_true = Y_test[:, i]
+        y_pred = Y_pred[:, i]
+        y_uncert = Y_std[:, i]
+        
         error = np.abs(y_true - y_pred)
-        normalized_error = error / y_uncert
+        # normalized_error = error / y_uncert
 
         # Histogram (overlayed)
-        ax_hist.hist(normalized_error, bins=30, alpha=0.4, label=name, color=colors[name])
+        # ax_hist.hist(normalized_error, bins=30, alpha=0.4, label=name, color=colors[name])
+        # Plot absolute error histogram (not normalized)
+        ax_hist.hist(error, bins=30, alpha=0.4, label=name, color=colors[name])
         # Scatter
         ax_scatter.scatter(y_uncert, error, alpha=0.4, label=name, color=colors[name])
+        
+    ax_scatter.set_xlim(left=0)
+    ax_scatter.set_ylim(bottom=0)
 
-    ax_hist.set_xlabel("Normalized Error")
+    ax_hist.set_xlabel("Error")
     ax_hist.set_ylabel("Count")
     ax_hist.set_title(f"Output {i}: Norm Error Hist")
     ax_hist.grid(True)

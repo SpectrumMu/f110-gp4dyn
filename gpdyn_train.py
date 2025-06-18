@@ -1,4 +1,3 @@
-from pyexpat import model
 import torch
 import numpy as np
 import pickle
@@ -6,8 +5,10 @@ from gp_model import MultiOutputGP, MultiOutputSparseGP, MultiOutputStochasticVa
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.preprocessing import StandardScaler
 
 MODEL = 'sparse'  # 'multioutput', 'sparse', or 'stochastic_variational'
+IF_NORM = True  # Whether to normalize the data
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
@@ -34,10 +35,6 @@ if np.isnan(train_controls).any() or np.isinf(train_controls).any():
     raise ValueError("NaN or Inf values found in train_controls")
 if np.isnan(train_dynamics).any() or np.isinf(train_dynamics).any():
     raise ValueError("NaN or Inf values found in train_dynamics")
-# Convert to PyTorch tensors
-train_states = torch.tensor(train_states, dtype=torch.float32)
-train_controls = torch.tensor(train_controls, dtype=torch.float32)
-train_dynamics = torch.tensor(train_dynamics, dtype=torch.float32)
 
 # Assume you only have one friction class, drop the first dim
 states = train_states[0]    # (N, 2, 4)
@@ -49,8 +46,20 @@ uk = controls[:, 0, :]   # (N, 2)
 xk1 = states[:, 1, :]    # (N, 4)
 yk = dynamics[:, 0, :]  # (N, 4)
 
-X_train = torch.cat([xk, uk], dim=-1)  # (N, 6)
+X_train = np.concatenate([xk, uk], axis=-1)  # (N, 6)
 Y_train = yk                           # (N, 4)
+
+# Normalize X_train and Y_train
+x_scaler = StandardScaler()
+y_scaler = StandardScaler()
+
+if IF_NORM:
+    X_train = x_scaler.fit_transform(X_train)
+    Y_train = y_scaler.fit_transform(Y_train)
+
+# Convert to PyTorch tensors
+X_train = torch.tensor(X_train, dtype=torch.float32)
+Y_train = torch.tensor(Y_train, dtype=torch.float32)
 
 # Split into train and test sets
 X_train, X_test, Y_train, Y_test = train_test_split(
@@ -58,8 +67,6 @@ X_train, X_test, Y_train, Y_test = train_test_split(
 )
 
 # === Train model ===
-# gp_model = MultiOutputGP(X_train, Y_train, device=device)
-# gp_model.train(X_train, Y_train, training_iter=100)
 gp_model = None
 if MODEL == 'multioutput':
     gp_model = MultiOutputGP(X_train, Y_train, device=device)
@@ -74,25 +81,46 @@ gp_model.train(num_epochs=[1000,1000,1000,100])
 with open(MODELDIR + "gp_model.pkl", "wb") as f:
     pickle.dump(gp_model, f)
 
-print("Model saved to gp_model.pkl")
+with open(MODELDIR + "scalers.pkl", "wb") as f:
+    pickle.dump({'x_scaler': x_scaler, 'y_scaler': y_scaler}, f)
+
+print("Model saved to gp_model.pkl and scalers saved to scalers.pkl")
 
 # # === Load model ===
 # with open("gp_model.pkl", "rb") as f:
 #     loaded_model = pickle.load(f)
+
+# with open(MODELDIR + "scalers.pkl", "rb") as f:
+#     scalers = pickle.load(f)
+# x_scaler = scalers['x_scaler']
+# y_scaler = scalers['y_scaler']
 
 # print("Model loaded.")
 
 # # === Predict and Evaluate ===
 Y_pred, Y_std = gp_model.predict(X_test)
 
+if IF_NORM:
+    # Restore predictions to original scale
+    Y_pred_raw = y_scaler.inverse_transform(Y_pred.numpy())
+    Y_std_raw = y_scaler.inverse_transform(Y_std.numpy())
+
+    # Example: If you need to restore test data for comparison
+    Y_test_raw = y_scaler.inverse_transform(Y_test.numpy())
+else:
+    Y_pred_raw = Y_pred.numpy()
+    Y_std_raw = Y_std.numpy()
+    Y_test_raw = Y_test.numpy()
+
+
 # === Evaluation ===
 num_outputs = Y_test.shape[-1]
 fig, axes = plt.subplots(2, num_outputs, figsize=(6 * num_outputs, 10))  # Removed sharey='row'
 
 for i in range(num_outputs):
-    y_true = Y_test[:, i].numpy()
-    y_pred = Y_pred[:, i].numpy()
-    y_uncert = Y_std[:, i].numpy()
+    y_true = Y_test_raw[:, i]
+    y_pred = Y_pred_raw[:, i]
+    y_uncert = Y_std_raw[:, i]
     error = np.abs(y_true - y_pred)
     normalized_error = error / y_uncert
 

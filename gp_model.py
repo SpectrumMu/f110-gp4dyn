@@ -123,6 +123,7 @@ class SparseGPModel(gpytorch.models.ApproximateGP):
             ScaleKernel(RBFKernel()) +
             ScaleKernel(gpytorch.kernels.LinearKernel())
         )
+        # self.covar_module = ScaleKernel(RBFKernel()) 
 
     def forward(self, x):
         mean_x = self.mean_module(x)
@@ -201,6 +202,7 @@ class StochasticVariationalGP(gpytorch.models.ApproximateGP):
             ScaleKernel(RBFKernel()) +
             ScaleKernel(LinearKernel())
         )
+        # self.covar_module = ScaleKernel(RBFKernel()) 
 
     def forward(self, x):
         mean_x = self.mean_module(x)
