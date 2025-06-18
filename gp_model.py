@@ -37,6 +37,7 @@ Notes:
 - Multi-output is handled by independent GPs for each output dimension.
 - Training and prediction are performed on the specified device (CPU or GPU).
 """
+from cvxpy import std
 import torch
 import gpytorch
 from gpytorch.models import ExactGP
@@ -98,13 +99,15 @@ class MultiOutputGP:
     def predict(self, X_test):
         X_test = X_test.to(self.device)
         preds = []
-        for i, model in enumerate(self.models):
+        stds = []
+        for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods)):
             model.eval()
-            self.likelihoods[i].eval()
+            likelihood.eval()
             with torch.no_grad(), gpytorch.settings.fast_pred_var():
-                pred = self.likelihoods[i](model(X_test))
-                preds.append(pred.mean.cpu().unsqueeze(-1))  # Move result to CPU
-        return torch.cat(preds, dim=-1)
+                pred = likelihood(model(X_test))
+                preds.append(pred.mean.cpu().unsqueeze(-1))
+                stds.append(pred.stddev.cpu().unsqueeze(-1))
+        return torch.cat(preds, dim=-1), torch.cat(stds, dim=-1)
 
 
 class SparseGPModel(gpytorch.models.ApproximateGP):
@@ -221,9 +224,12 @@ class MultiOutputStochasticVariationalGP:
             
         print(f"Initialized {len(self.models)} Stochastic Variational GPs on device {self.device}")
 
-    def train(self, num_epochs=100, batch_size=512):
+    def train(self, num_epochs=None, batch_size=512):
         self.models = [m.train() for m in self.models]
         self.likelihoods = [l.train() for l in self.likelihoods]
+        
+        if num_epochs is None:
+            num_epochs = [500, 500, 500, 100]
 
         for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods)):
             print(f"Training Stochastic Variational GP {i+1}/{len(self.models)}")
@@ -237,7 +243,7 @@ class MultiOutputStochasticVariationalGP:
             train_dataset = torch.utils.data.TensorDataset(self.X_train, self.Y_train[:, i])
             train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-            for _ in tqdm(range(num_epochs), desc=f"Training Stochastic Variational GP {i+1}"):
+            for _ in tqdm(range(num_epochs[i]), desc=f"Training Stochastic Variational GP {i+1}"):
                 for x_batch, y_batch in train_loader:
                     x_batch = x_batch.to(self.device)
                     y_batch = y_batch.to(self.device)
