@@ -77,6 +77,7 @@ venv/
 *.pkl
 
 # Folders
-evaluate_out/
+models/*
+evaluate_out/*
 result.txt 
 test.py

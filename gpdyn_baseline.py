@@ -1,5 +1,3 @@
-from pyexpat import model
-from re import X
 import torch
 import numpy as np
 import pickle
@@ -9,20 +7,39 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler
 from linear_operator.settings import max_cg_iterations, cg_tolerance
+import yaml
+import datetime
+import os
+
+config = None
+with open("./config/config.yaml", "r") as file:
+    config = yaml.safe_load(file)
+
+# Extract Runtime Parameters in config
+# Some path
+DATADIR = config["global"]["data_folder"]
+MODELDIR = config["global"]["model_folder"]
+EVALDIR = config["global"]["eval_folder"]
+# Model info
+IF_NORM = config["compare_config"]["if_norm"]
+N_SUBSET = int(config["compare_config"]["N_sub"])
+SPLIT = float(config["compare_config"]["train_test_split"])
+EPOCH = int(config["compare_config"]["epoch"])
+
+# Create directories if they do not exist
+if not os.path.exists(MODELDIR):
+    os.makedirs(MODELDIR)
+if not os.path.exists(EVALDIR):
+    os.makedirs(EVALDIR)
 
 # Increase max CG iterations and adjust tolerance
 max_cg_iterations(2000)  # Increase the maximum iterations
 cg_tolerance(1e-3)       # Relax the tolerance slightly
 
-MODEL = 'multioutput'  # 'multioutput', 'sparse', or 'stochastic_variational'
-IF_NORM = True  # Whether to normalize the data
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
 
 # Load the data
-DATADIR = '/home/mu/workspace/roboracer/data/kine_rand_uniform/'
-MODELDIR = '/home/mu/workspace/roboracer/src/gp-ws/models/'
 
 train_data = np.load(DATADIR + 'train_data.npz')
 train_states = train_data['train_states']
@@ -49,8 +66,7 @@ controls = train_controls[0]  # (N, 1, 2)
 dynamics = train_dynamics[0]  # (N, 1, 4)
 
 # Select a subset of the data, e.g., N=1000
-N = 3000
-indices = np.random.choice(states.shape[0], size=N, replace=False)
+indices = np.random.choice(states.shape[0], size=N_SUBSET, replace=False)
 states = states[indices]
 controls = controls[indices]
 dynamics = dynamics[indices]
@@ -77,12 +93,10 @@ Y_train = torch.tensor(Y_train, dtype=torch.float32)
 
 # Split into train and test sets
 X_train, X_test, Y_train, Y_test = train_test_split(
-    X_train, Y_train, test_size=0.5, random_state=42
+    X_train, Y_train, test_size=SPLIT, random_state=42
 )
 
 # === Train model ===
-# gp_model = MultiOutputGP(X_train, Y_train, device=device)
-# gp_model.train(X_train, Y_train, training_iter=100)
 # Train all three models on the same data
 models = {
     'multioutput': MultiOutputGP(X_train, Y_train, device=device),
@@ -94,15 +108,25 @@ models = {
 for name, model in models.items():
     print(f"Training {name} model...")
     if name == 'multioutput':
-        model.train(X_train, Y_train, training_iter=100)
+        model.train(X_train, Y_train, training_iter=EPOCH)
     else:
-        model.train(num_epochs=[100, 100, 100, 100])
+        model.train(num_epochs=[EPOCH, EPOCH, EPOCH, EPOCH])
+
+# Generate a timestamp
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
 # Save each model
 for name, model in models.items():
-    with open(MODELDIR + f"gp_model_{name}.pkl", "wb") as f:
+    model_filename = f"gp_model_{name}_{timestamp}.pkl"
+    with open(MODELDIR + model_filename, "wb") as f:
         pickle.dump(model, f)
-    print(f"Model saved to gp_model_{name}.pkl")
+    print(f"Model saved to {model_filename}")
+
+# Save scalers
+scalers_filename = f"scalers_{timestamp}.pkl"
+with open(MODELDIR + scalers_filename, "wb") as f:
+    pickle.dump({'x_scaler': x_scaler, 'y_scaler': y_scaler}, f)
+print(f"Scalers saved to {scalers_filename}")
 
 # Predict and evaluate for each model
 results = {}
@@ -118,6 +142,10 @@ Y_test = y_scaler.inverse_transform(Y_test)  # Inverse transform Y_test if norma
 # === Evaluation: plot all models in the same figure ===
 num_outputs = Y_test.shape[-1]
 fig, axes = plt.subplots(2, num_outputs, figsize=(6 * num_outputs, 10))
+
+eval_dir_timestamped = EVALDIR + f"eval_{timestamp}/"
+if not os.path.exists(eval_dir_timestamped):
+    os.makedirs(eval_dir_timestamped)
 
 colors = {'multioutput': 'blue', 'sparse': 'green', 'stochastic_variational': 'red'}
 for i in range(num_outputs):
@@ -154,54 +182,7 @@ for i in range(num_outputs):
     ax_scatter.legend()
 
 plt.tight_layout()
-plt.savefig("/home/mu/workspace/roboracer/src/gp-ws/evaluate_out/all_outputs_norm_hist_and_scatter_compare.png")
-plt.show()
-
-# === Save model ===
-exit(0)
-with open(MODELDIR + "gp_model.pkl", "wb") as f:
-    pickle.dump(gp_model, f)
-
-print("Model saved to gp_model.pkl")
-
-# # === Load model ===
-# with open("gp_model.pkl", "rb") as f:
-#     loaded_model = pickle.load(f)
-
-# print("Model loaded.")
-
-# # === Predict and Evaluate ===
-Y_pred, Y_std = gp_model.predict(X_test)
-
-# === Evaluation ===
-num_outputs = Y_test.shape[-1]
-fig, axes = plt.subplots(2, num_outputs, figsize=(6 * num_outputs, 10))  # Removed sharey='row'
-
-for i in range(num_outputs):
-    y_true = Y_test[:, i].numpy()
-    y_pred = Y_pred[:, i].numpy()
-    y_uncert = Y_std[:, i].numpy()
-    error = np.abs(y_true - y_pred)
-    normalized_error = error / y_uncert
-
-    # Top row: normalized error histogram
-    ax_hist = axes[0, i] if num_outputs > 1 else axes[0]
-    ax_hist.hist(normalized_error, bins=30, alpha=0.7)
-    ax_hist.set_xlabel("Normalized Error")
-    ax_hist.set_ylabel("Count")
-    ax_hist.set_title(f"Output {i}: Norm Error Hist")
-    ax_hist.grid(True)
-
-    # Bottom row: scatter plot (absolute error vs. uncertainty)
-    ax_scatter = axes[1, i] if num_outputs > 1 else axes[1]
-    ax_scatter.scatter(y_uncert, error, alpha=0.5)
-    ax_scatter.set_xlabel("Predicted Stddev (Uncertainty)")
-    ax_scatter.set_ylabel("Absolute Error")
-    ax_scatter.set_title(f"Output {i}: Error vs Uncertainty")
-    ax_scatter.grid(True)
-
-plt.tight_layout()
-plt.savefig("/home/mu/workspace/roboracer/src/gp-ws/evaluate_out/all_outputs_norm_hist_and_scatter.png")
+plt.savefig(eval_dir_timestamped + "all_outputs_norm_hist_and_scatter_compare.png")
 plt.show()
 
 

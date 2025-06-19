@@ -6,16 +6,50 @@ from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler
+from linear_operator.settings import max_cg_iterations, cg_tolerance
+import yaml
+import json
+import datetime
+import os
 
-MODEL = 'sparse'  # 'multioutput', 'sparse', or 'stochastic_variational'
-IF_NORM = True  # Whether to normalize the data
+
+config = None
+with open("./config/config.yaml", "r") as file:
+    config = yaml.safe_load(file)
+
+# Extract Runtime Parameters in config
+# Some path
+DATADIR = config["global"]["data_folder"]
+MODELDIR = config["global"]["model_folder"]
+EVALDIR = config["global"]["eval_folder"]
+# Model info
+IF_NORM = config["gp_train"]["if_norm"]
+MODEL_TYPE = int(config["gp_train"]["model_type"])
+SPLIT = float(config["gp_train"]["train_test_split"])
+EPOCH = int(config["gp_train"]["epoch"])
+
+if not os.path.exists(MODELDIR):
+    os.makedirs(MODELDIR)
+
+if MODEL_TYPE == 0:
+    MODELDIR += "multioutput/"
+elif MODEL_TYPE == 1:
+    MODELDIR += "sparse/"
+elif MODEL_TYPE == 2:
+    MODELDIR += "stochastic_variational/"
+
+# Create directories if they do not exist
+if not os.path.exists(MODELDIR):
+    os.makedirs(MODELDIR)
+if not os.path.exists(EVALDIR):
+    os.makedirs(EVALDIR)
+
+# Increase max CG iterations and adjust tolerance
+max_cg_iterations(2000)  # Increase the maximum iterations
+cg_tolerance(1e-3)       # Relax the tolerance slightly
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
-
-# Load the data
-DATADIR = '/home/mu/workspace/roboracer/data/kine_rand_uniform/'
-MODELDIR = '/home/mu/workspace/roboracer/src/gp-ws/models/'
 
 train_data = np.load(DATADIR + 'train_data.npz')
 train_states = train_data['train_states']
@@ -68,23 +102,62 @@ X_train, X_test, Y_train, Y_test = train_test_split(
 
 # === Train model ===
 gp_model = None
-if MODEL == 'multioutput':
+if MODEL_TYPE == 0:
     gp_model = MultiOutputGP(X_train, Y_train, device=device)
-elif MODEL == 'sparse':
+    gp_model.train(X_train, Y_train, training_iter=EPOCH)
+elif MODEL_TYPE == 1:
     gp_model = MultiOutputSparseGP(X_train, Y_train, num_inducing=128, device=device)
-elif MODEL == 'stochastic_variational':
+    gp_model.train(num_epochs=[EPOCH, EPOCH, EPOCH, 100])
+elif MODEL_TYPE == 2:
     gp_model = MultiOutputStochasticVariationalGP(X_train, Y_train, num_inducing=128, device=device)
-# gp_model = MultiOutputSparseGP(X_train, Y_train, num_inducing=128)
-gp_model.train(num_epochs=[1000,1000,1000,100])
+    gp_model.train(num_epochs=[EPOCH, EPOCH, EPOCH, 100])
+
+# Generate a timestamp
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+MODELDIR += f"{timestamp}/"
+
+if not os.path.exists(MODELDIR):
+    os.makedirs(MODELDIR)
 
 # === Save model ===
-with open(MODELDIR + "gp_model.pkl", "wb") as f:
+name = "multioutput" if MODEL_TYPE == 0 else "sparse" if MODEL_TYPE == 1 else "stochastic_variational"
+model_filename = f"gp_model_{name}.pkl"
+with open(MODELDIR + model_filename, "wb") as f:
     pickle.dump(gp_model, f)
 
-with open(MODELDIR + "scalers.pkl", "wb") as f:
+# Save scalers
+scaler_filename = f"scaler.pkl"
+with open(MODELDIR + scaler_filename, "wb") as f:
     pickle.dump({'x_scaler': x_scaler, 'y_scaler': y_scaler}, f)
 
-print("Model saved to gp_model.pkl and scalers saved to scalers.pkl")
+print(f"Model saved to {model_filename}")
+print(f"Scalers saved to {scaler_filename}")
+
+# Collect data information
+data_info = {
+    "train_states_shape": train_states.shape,
+    "train_controls_shape": train_controls.shape,
+    "train_dynamics_shape": train_dynamics.shape,
+    "subset_indices": indices.tolist() if 'indices' in locals() else None,
+    "X_train_shape": X_train.shape,
+    "Y_train_shape": Y_train.shape,
+    "X_test_shape": X_test.shape,
+    "Y_test_shape": Y_test.shape,
+    "normalization": IF_NORM,
+    "timestamp": timestamp,
+    "v_max": np.max(train_states[:, 0, 1]),
+    "v_min": np.min(train_states[:, 0, 1]),
+    "model_type": name,
+    "model_filename": model_filename,
+    "scaler_filename": scaler_filename
+}
+
+# Save data info to a JSON file
+data_info_filename = f"data_info.json"
+with open(MODELDIR + data_info_filename, "w") as f:
+    json.dump(data_info, f, indent=4)
+
+print(f"Data info saved to {data_info_filename}")
 
 # # === Load model ===
 # with open("gp_model.pkl", "rb") as f:
@@ -112,6 +185,9 @@ else:
     Y_std_raw = Y_std.numpy()
     Y_test_raw = Y_test.numpy()
 
+eval_dir_timestamped = EVALDIR + f"train_{timestamp}/"
+if not os.path.exists(eval_dir_timestamped):
+    os.makedirs(eval_dir_timestamped)
 
 # === Evaluation ===
 num_outputs = Y_test.shape[-1]
@@ -141,60 +217,6 @@ for i in range(num_outputs):
     ax_scatter.grid(True)
 
 plt.tight_layout()
-plt.savefig("/home/mu/workspace/roboracer/src/gp-ws/evaluate_out/all_outputs_norm_hist_and_scatter.png")
-plt.show()
-
-# # Evaluation: MSE
-# mse_list = []
-# mae_list = []
-# r2_list = []
-
-# for i in range(Y_test.shape[-1]):
-#     y_true = Y_test[:, i].numpy()
-#     y_pred = Y_pred[:, i].numpy()
-#     mse = mean_squared_error(y_true, y_pred)
-#     mae = mean_absolute_error(y_true, y_pred)
-#     r2 = r2_score(y_true, y_pred)
-#     mse_list.append(mse)
-#     mae_list.append(mae)
-#     r2_list.append(r2)
-#     print(f"Output {i}: MSE={mse:.4f}, MAE={mae:.4f}, R2={r2:.4f}")
-
-# # Aggregate metrics
-# print("\nAggregate metrics:")
-# print(f"Mean MSE: {np.mean(mse_list):.4f} ± {np.std(mse_list):.4f}")
-# print(f"Mean MAE: {np.mean(mae_list):.4f} ± {np.std(mae_list):.4f}")
-# print(f"Mean R2:  {np.mean(r2_list):.4f} ± {np.std(r2_list):.4f}")
-
-# # Residual analysis and scatter plots
-# for i in range(Y_test.shape[-1]):
-#     y_true = Y_test[:, i].numpy()
-#     y_pred = Y_pred[:, i].numpy()
-#     residuals = y_true - y_pred
-
-#     plt.figure(figsize=(16, 4))
-#     plt.subplot(1, 3, 1)
-#     plt.plot(y_true, label='True')
-#     plt.plot(y_pred, label='Predicted')
-#     plt.title(f"Output {i}: Prediction vs True")
-#     plt.legend()
-#     plt.grid(True)
-
-#     plt.subplot(1, 3, 2)
-#     plt.scatter(y_true, y_pred, alpha=0.5)
-#     plt.xlabel("True")
-#     plt.ylabel("Predicted")
-#     plt.title(f"Output {i}: Predicted vs True")
-#     plt.grid(True)
-
-#     plt.subplot(1, 3, 3)
-#     plt.hist(residuals, bins=30, alpha=0.7)
-#     plt.title(f"Output {i}: Residuals")
-#     plt.xlabel("Residual")
-#     plt.ylabel("Count")
-#     plt.grid(True)
-
-#     plt.tight_layout()
-#     plt.savefig(f"/home/mu/workspace/src/gp-ws/evaluate_out/output_dim_{i}_eval.png")
-#     plt.show()
+plt.savefig(eval_dir_timestamped + "all_outputs_norm_hist_and_scatter.png")
+# plt.show()
 
