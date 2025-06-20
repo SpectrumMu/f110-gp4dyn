@@ -49,7 +49,7 @@ from tqdm import tqdm
 class SingleOutputGPModel(ExactGP):
     def __init__(self, train_x, train_y, likelihood):
         super().__init__(train_x, train_y, likelihood)
-        self.mean_module = gpytorch.means.ZeroMean()
+        self.mean_module = gpytorch.means.ConstantMean()
         self.covar_module = ScaleKernel(RBFKernel())
 
     def forward(self, x):
@@ -77,7 +77,7 @@ class MultiOutputGP:
 
         print(f"Initialized {len(self.models)} GPs on device {self.device}")
 
-    def train(self, X_train, Y_train, training_iter=100):
+    def train(self, X_train, Y_train, training_iter=100, lr=0.01):
         X_train = X_train.to(self.device)
         Y_train = Y_train.to(self.device)
 
@@ -86,7 +86,7 @@ class MultiOutputGP:
             model.train()
             self.likelihoods[i].train()
 
-            optimizer = torch.optim.Adam(model.parameters(), lr=0.1)
+            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
             mll = self.mlls[i]
 
             for _ in tqdm(range(training_iter), desc=f"Training GP {i+1}"):
@@ -118,7 +118,7 @@ class SparseGPModel(gpytorch.models.ApproximateGP):
         )
         super().__init__(variational_strategy)
 
-        self.mean_module = gpytorch.means.ZeroMean()
+        self.mean_module = gpytorch.means.ConstantMean()
         self.covar_module = (
             ScaleKernel(RBFKernel()) +
             ScaleKernel(gpytorch.kernels.LinearKernel())
@@ -147,19 +147,19 @@ class MultiOutputSparseGP:
             
         print(f"Initialized {len(self.models)} Sparse GPs on device {self.device}")
 
-    def train(self, num_epochs=None, batch_size=512):
+    def train(self, num_epochs=None, batch_size=512, lr=0.01):
         self.models = [m.train() for m in self.models]
         self.likelihoods = [l.train() for l in self.likelihoods]
         
         if num_epochs is None:
-            num_epochs = [500,500,500,100]
+            num_epochs = [500, 500, 500, 100]
 
         for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods)):
             print(f"Training Sparse GP {i+1}/{len(self.models)}")
             optimizer = torch.optim.Adam([
                 {'params': model.parameters()},
                 {'params': likelihood.parameters()},
-            ], lr=0.01)
+            ], lr=lr)
 
             mll = gpytorch.mlls.VariationalELBO(likelihood, model, num_data=self.X_train.size(0))
 
@@ -197,7 +197,7 @@ class StochasticVariationalGP(gpytorch.models.ApproximateGP):
             self, inducing_points, variational_distribution, learn_inducing_locations=True
         )
         super().__init__(variational_strategy)
-        self.mean_module = gpytorch.means.ZeroMean()
+        self.mean_module = gpytorch.means.ConstantMean()
         self.covar_module = (
             ScaleKernel(RBFKernel()) +
             ScaleKernel(LinearKernel())
@@ -226,7 +226,7 @@ class MultiOutputStochasticVariationalGP:
             
         print(f"Initialized {len(self.models)} Stochastic Variational GPs on device {self.device}")
 
-    def train(self, num_epochs=None, batch_size=512):
+    def train(self, num_epochs=None, batch_size=512, lr=0.01):
         self.models = [m.train() for m in self.models]
         self.likelihoods = [l.train() for l in self.likelihoods]
         
@@ -238,7 +238,7 @@ class MultiOutputStochasticVariationalGP:
             optimizer = torch.optim.Adam([
                 {'params': model.parameters()},
                 {'params': likelihood.parameters()},
-            ], lr=0.01)
+            ], lr=lr)
 
             mll = gpytorch.mlls.VariationalELBO(likelihood, model, num_data=self.X_train.size(0))
 

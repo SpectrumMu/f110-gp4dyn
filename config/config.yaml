@@ -1,5 +1,6 @@
 global:
   data_folder: "/home/mu/workspace/roboracer/data/kine_rand_uniform/"
+  # data_folder: "/home/mu/workspace/roboracer/data/rand_validation/"
   model_folder: "/home/mu/workspace/roboracer/src/gp-ws/models/"
   eval_folder: "/home/mu/workspace/roboracer/src/gp-ws/evaluate_out/"
 
@@ -10,10 +11,10 @@ compare_config:
   epoch: 100
   
 gp_train:
-  model_type: 1
+  model_type: 0
   if_norm: True 
   train_test_split: 0.8
-  epoch: 100
+  epoch: 200
 
 gp_eval:
   model_name: ""

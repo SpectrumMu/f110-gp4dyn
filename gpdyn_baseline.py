@@ -9,7 +9,7 @@ from sklearn.preprocessing import StandardScaler
 from linear_operator.settings import max_cg_iterations, cg_tolerance
 import yaml
 import datetime
-import os
+import os, json
 
 config = None
 with open("./config/config.yaml", "r") as file:
@@ -37,7 +37,7 @@ max_cg_iterations(2000)  # Increase the maximum iterations
 cg_tolerance(1e-3)       # Relax the tolerance slightly
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(device)
+print(device) 
 
 # Load the data
 
@@ -115,18 +115,52 @@ for name, model in models.items():
 # Generate a timestamp
 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
+MODELDIR = MODELDIR + "compare/"
+if not os.path.exists(MODELDIR):
+    os.makedirs(MODELDIR)
+    
+MODELDIR += f"{timestamp}/"
+if not os.path.exists(MODELDIR):
+    os.makedirs(MODELDIR)
+
 # Save each model
 for name, model in models.items():
-    model_filename = f"gp_model_{name}_{timestamp}.pkl"
+    model_filename = f"gp_model_{name}.pkl"
     with open(MODELDIR + model_filename, "wb") as f:
         pickle.dump(model, f)
     print(f"Model saved to {model_filename}")
 
 # Save scalers
-scalers_filename = f"scalers_{timestamp}.pkl"
+scalers_filename = f"scalers.pkl"
 with open(MODELDIR + scalers_filename, "wb") as f:
     pickle.dump({'x_scaler': x_scaler, 'y_scaler': y_scaler}, f)
 print(f"Scalers saved to {scalers_filename}")
+
+# Collect data information
+data_info = {
+    "train_states_shape": train_states.shape,
+    "train_controls_shape": train_controls.shape,
+    "train_dynamics_shape": train_dynamics.shape,
+    "subset_indices": indices.tolist() if 'indices' in locals() else None,
+    "X_train_shape": X_train.shape,
+    "Y_train_shape": Y_train.shape,
+    "X_test_shape": X_test.shape,
+    "Y_test_shape": Y_test.shape,
+    "normalization": IF_NORM,
+    "timestamp": timestamp,
+    "v_max": np.max(train_states[:, 0, 1]),
+    "v_min": np.min(train_states[:, 0, 1]),
+    "model_filename": model_filename,
+    "scaler_filename": scalers_filename
+}
+
+# Save data info to a JSON file
+data_info_filename = f"data_info.json"
+with open(MODELDIR + data_info_filename, "w") as f:
+    json.dump(data_info, f, indent=4)
+
+print(f"Data info saved to {data_info_filename}")
+
 
 # Predict and evaluate for each model
 results = {}
@@ -143,7 +177,7 @@ Y_test = y_scaler.inverse_transform(Y_test)  # Inverse transform Y_test if norma
 num_outputs = Y_test.shape[-1]
 fig, axes = plt.subplots(2, num_outputs, figsize=(6 * num_outputs, 10))
 
-eval_dir_timestamped = EVALDIR + f"eval_{timestamp}/"
+eval_dir_timestamped = EVALDIR + f"compare_{timestamp}/"
 if not os.path.exists(eval_dir_timestamped):
     os.makedirs(eval_dir_timestamped)
 

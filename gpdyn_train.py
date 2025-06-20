@@ -215,6 +215,9 @@ for i in range(num_outputs):
     ax_scatter.set_ylabel("Absolute Error")
     ax_scatter.set_title(f"Output {i}: Error vs Uncertainty")
     ax_scatter.grid(True)
+    
+    # ax_scatter.set_xlim(left=0)
+    # ax_scatter.set_ylim(bottom=0)
 
 plt.tight_layout()
 plt.savefig(eval_dir_timestamped + "all_outputs_norm_hist_and_scatter.png")
