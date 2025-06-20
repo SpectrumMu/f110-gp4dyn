@@ -77,8 +77,9 @@ venv/
 *.pkl
 
 # Folders
+logs/*
 models/*
 evaluate_out/*
 result.txt 
 test.py
-*.Identifier
+Simple_GP*

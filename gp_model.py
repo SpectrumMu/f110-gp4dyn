@@ -37,7 +37,6 @@ Notes:
 - Multi-output is handled by independent GPs for each output dimension.
 - Training and prediction are performed on the specified device (CPU or GPU).
 """
-from cvxpy import std
 import torch
 import gpytorch
 from gpytorch.models import ExactGP
@@ -45,11 +44,13 @@ from gpytorch.kernels import RBFKernel, ScaleKernel, LinearKernel
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from tqdm import tqdm
+# import logging 
+# from utils.logger import setup_logger, loss
 
 class SingleOutputGPModel(ExactGP):
     def __init__(self, train_x, train_y, likelihood):
         super().__init__(train_x, train_y, likelihood)
-        self.mean_module = gpytorch.means.ConstantMean()
+        self.mean_module = gpytorch.means.ZeroMean()
         self.covar_module = ScaleKernel(RBFKernel())
 
     def forward(self, x):
@@ -77,12 +78,15 @@ class MultiOutputGP:
 
         print(f"Initialized {len(self.models)} GPs on device {self.device}")
 
-    def train(self, X_train, Y_train, training_iter=100, lr=0.01):
+    def train(self, X_train, Y_train, training_iter=100, lr=0.01, logger=None):
         X_train = X_train.to(self.device)
         Y_train = Y_train.to(self.device)
 
         for i, model in enumerate(self.models):
-            print(f"Training GP {i+1}/{len(self.models)}")
+            if logger:
+                logger.info(f"Training GP {i+1}/{len(self.models)}")
+            else:
+                print(f"Training GP {i+1}/{len(self.models)}")
             model.train()
             self.likelihoods[i].train()
 
@@ -93,6 +97,8 @@ class MultiOutputGP:
                 optimizer.zero_grad()
                 output = model(X_train)
                 loss = -mll(output, Y_train[:, i])
+                if logger is not None:
+                    logger.debug(f"GP {i+1} Loss: {loss.item()}")
                 loss.backward()
                 optimizer.step()
 
@@ -118,7 +124,7 @@ class SparseGPModel(gpytorch.models.ApproximateGP):
         )
         super().__init__(variational_strategy)
 
-        self.mean_module = gpytorch.means.ConstantMean()
+        self.mean_module = gpytorch.means.ZeroMean()
         self.covar_module = (
             ScaleKernel(RBFKernel()) +
             ScaleKernel(gpytorch.kernels.LinearKernel())
@@ -147,7 +153,7 @@ class MultiOutputSparseGP:
             
         print(f"Initialized {len(self.models)} Sparse GPs on device {self.device}")
 
-    def train(self, num_epochs=None, batch_size=512, lr=0.01):
+    def train(self, num_epochs=None, batch_size=512, lr=0.01, logger=None):
         self.models = [m.train() for m in self.models]
         self.likelihoods = [l.train() for l in self.likelihoods]
         
@@ -155,7 +161,10 @@ class MultiOutputSparseGP:
             num_epochs = [500, 500, 500, 100]
 
         for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods)):
-            print(f"Training Sparse GP {i+1}/{len(self.models)}")
+            if logger:
+                logger.info(f"Training Sparse GP {i+1}/{len(self.models)}")
+            else:
+                print(f"Training Sparse GP {i+1}/{len(self.models)}")
             optimizer = torch.optim.Adam([
                 {'params': model.parameters()},
                 {'params': likelihood.parameters()},
@@ -166,7 +175,7 @@ class MultiOutputSparseGP:
             train_dataset = torch.utils.data.TensorDataset(self.X_train, self.Y_train[:, i])
             train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-            for _ in tqdm(range(num_epochs[i]), desc=f"Training Sparse GP {i+1}"):
+            for epoch in tqdm(range(num_epochs[i]), desc=f"Training Sparse GP {i+1}"):
                 for x_batch, y_batch in train_loader:
                     x_batch = x_batch.to(self.device)
                     y_batch = y_batch.to(self.device)
@@ -174,6 +183,8 @@ class MultiOutputSparseGP:
                     optimizer.zero_grad()
                     output = model(x_batch)
                     loss = -mll(output, y_batch)
+                    if logger is not None:
+                        logger.debug(f"Epoch {epoch+1} - Loss: {loss:.4f}")
                     loss.backward()
                     optimizer.step()
 
@@ -197,7 +208,7 @@ class StochasticVariationalGP(gpytorch.models.ApproximateGP):
             self, inducing_points, variational_distribution, learn_inducing_locations=True
         )
         super().__init__(variational_strategy)
-        self.mean_module = gpytorch.means.ConstantMean()
+        self.mean_module = gpytorch.means.ZeroMean()
         self.covar_module = (
             ScaleKernel(RBFKernel()) +
             ScaleKernel(LinearKernel())
@@ -226,7 +237,7 @@ class MultiOutputStochasticVariationalGP:
             
         print(f"Initialized {len(self.models)} Stochastic Variational GPs on device {self.device}")
 
-    def train(self, num_epochs=None, batch_size=512, lr=0.01):
+    def train(self, num_epochs=None, batch_size=512, lr=0.01, logger=None):
         self.models = [m.train() for m in self.models]
         self.likelihoods = [l.train() for l in self.likelihoods]
         
@@ -234,7 +245,10 @@ class MultiOutputStochasticVariationalGP:
             num_epochs = [500, 500, 500, 100]
 
         for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods)):
-            print(f"Training Stochastic Variational GP {i+1}/{len(self.models)}")
+            if logger:
+                logger.info(f"Training Stochastic Variational GP {i+1}/{len(self.models)}")
+            else:
+                print(f"Training Stochastic Variational GP {i+1}/{len(self.models)}")
             optimizer = torch.optim.Adam([
                 {'params': model.parameters()},
                 {'params': likelihood.parameters()},
@@ -253,6 +267,8 @@ class MultiOutputStochasticVariationalGP:
                     optimizer.zero_grad()
                     output = model(x_batch)
                     loss = -mll(output, y_batch)
+                    if logger is not None:
+                        logger.debug(f"Epoch {_+1} - Loss: {loss:.4f}")
                     loss.backward()
                     optimizer.step()
 
