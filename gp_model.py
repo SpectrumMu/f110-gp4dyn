@@ -106,6 +106,7 @@ class MultiOutputGP:
         X_test = X_test.to(self.device)
         preds = []
         stds = []
+        lower, upper = [], []
         for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods)):
             model.eval()
             likelihood.eval()
@@ -113,7 +114,9 @@ class MultiOutputGP:
                 pred = likelihood(model(X_test))
                 preds.append(pred.mean.cpu().unsqueeze(-1))
                 stds.append(pred.stddev.cpu().unsqueeze(-1))
-        return torch.cat(preds, dim=-1), torch.cat(stds, dim=-1)
+                lower.append(pred.confidence_region()[0].cpu().unsqueeze(-1))
+                upper.append(pred.confidence_region()[1].cpu().unsqueeze(-1))
+        return torch.cat(preds, dim=-1), torch.cat(stds, dim=-1), torch.cat(lower, dim=-1), torch.cat(upper, dim=-1)
 
 
 class SparseGPModel(gpytorch.models.ApproximateGP):
@@ -159,6 +162,8 @@ class MultiOutputSparseGP:
         
         if num_epochs is None:
             num_epochs = [500, 500, 500, 100]
+        if num_epochs[3] > 100:
+            num_epochs[3] = 100
 
         for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods)):
             if logger:
@@ -192,6 +197,7 @@ class MultiOutputSparseGP:
         X_test = X_test.to(self.device)
         preds = []
         stds = []
+        lower, upper = [], []
         for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods)):
             model.eval()
             likelihood.eval()
@@ -199,8 +205,10 @@ class MultiOutputSparseGP:
                 pred = likelihood(model(X_test))
                 preds.append(pred.mean.cpu().unsqueeze(-1))
                 stds.append(pred.stddev.cpu().unsqueeze(-1))
-        return torch.cat(preds, dim=-1), torch.cat(stds, dim=-1)
-    
+                lower.append(pred.confidence_region()[0].cpu().unsqueeze(-1))
+                upper.append(pred.confidence_region()[1].cpu().unsqueeze(-1))
+        return torch.cat(preds, dim=-1), torch.cat(stds, dim=-1), torch.cat(lower, dim=-1), torch.cat(upper, dim=-1)
+
 class StochasticVariationalGP(gpytorch.models.ApproximateGP):
     def __init__(self, inducing_points):
         variational_distribution = gpytorch.variational.CholeskyVariationalDistribution(inducing_points.size(0))
@@ -243,6 +251,8 @@ class MultiOutputStochasticVariationalGP:
         
         if num_epochs is None:
             num_epochs = [500, 500, 500, 100]
+        if num_epochs[3] > 100:
+            num_epochs[3] = 100
 
         for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods)):
             if logger:
@@ -276,6 +286,7 @@ class MultiOutputStochasticVariationalGP:
         X_test = X_test.to(self.device)
         preds = []
         stds = []
+        lower, upper = [], []
         for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods
         )):
             model.eval()
@@ -284,4 +295,6 @@ class MultiOutputStochasticVariationalGP:
                 pred = likelihood(model(X_test))
                 preds.append(pred.mean.cpu().unsqueeze(-1))
                 stds.append(pred.stddev.cpu().unsqueeze(-1))
-        return torch.cat(preds, dim=-1), torch.cat(stds, dim=-1)
+                lower.append(pred.confidence_region()[0].cpu().unsqueeze(-1))
+                upper.append(pred.confidence_region()[1].cpu().unsqueeze(-1))
+        return torch.cat(preds, dim=-1), torch.cat(stds, dim=-1), torch.cat(lower, dim=-1), torch.cat(upper, dim=-1)

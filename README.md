@@ -2,8 +2,8 @@
 
 TODOs:
 
-- [ ] Add evaluation like the example in Notebook
-- [ ] Using different kernels that allow corelation between outputs
+- [x] Add evaluation like the example in Notebook (in `gp_test.py`)
+- [ ] Using different kernels that allow correlation between outputs
 - [x] Standardized logging
 - [x] Structured folder and config 
 

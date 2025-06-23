@@ -105,7 +105,7 @@ def main():
     logger.info(f"Data info saved to {data_info_filename}")
 
     # # === Predict and Evaluate ===
-    Y_pred, Y_std = gp_model.predict(X_test)
+    Y_pred, Y_std, _, _ = gp_model.predict(X_test)
 
     if IF_NORM:
         # Restore predictions to original scale

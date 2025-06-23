@@ -15,10 +15,11 @@ gp_train:
   model_type: 1
   if_norm: True 
   train_test_split: 0.8
-  epoch: 10
-  learning_rate: 0.01
+  epoch: 100
+  learning_rate: 0.1
 
 gp_eval:
-  model_name: ""
+  model_dir: "/home/mu/workspace/roboracer/src/gp-ws/models/sparse/20250622_214332/"
   model_type: 1
   if_norm: True
+  eval_type: 1
