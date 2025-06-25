@@ -4,14 +4,14 @@ import pickle
 from gp_model import MultiOutputGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+# from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler
 from linear_operator.settings import max_cg_iterations, cg_tolerance
-import yaml
+# import yaml
 import json
-import datetime
-import os
-import logging
+# import datetime
+# import os
+# import logging
 from utils.utils import prepare, load_yaml_config
 from utils.logger import setup_logger
 

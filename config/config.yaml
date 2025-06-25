@@ -8,8 +8,9 @@ global:
 compare_config:
   if_norm: True
   N_sub: 3000
-  train_test_split: 0.5
+  train_test_split: 0.8
   epoch: 100
+  learning_rate: 0.1
   
 gp_train:
   model_type: 1

@@ -181,7 +181,8 @@ def eval_type_1(loaded_model, X_train, Y_train, X_test, logger):
     Y_train_np = Y_train.cpu().numpy()
     X_test_np = X_test.cpu().numpy()
 
-    X_train_mean = np.mean(X_train_np, axis=0)
+    idx = np.random.randint(0, X_train_np.shape[0])
+    X_train_mean = X_train_np[idx]
     
     for i in range(X_train_np.shape[1]):
         X_train_fake = np.ones_like(X_train_np) * X_train_mean

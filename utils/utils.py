@@ -41,7 +41,7 @@ def get_config_value(config: dict, key: str, default=None):
     """
     return config.get(key, default)
 
-def prepare(config: dict, mode: str) -> dict:
+def prepare(config: dict, mode: str, if_compare=0) -> dict:
     """
     Create a directory path based on the configuration.
     
@@ -66,16 +66,23 @@ def prepare(config: dict, mode: str) -> dict:
     path_check(eval_folder)
     path_check(log_folder)
     
-    if config["gp_train"]["model_type"] == 0:
-        model_dir += "multioutput/"
-    elif config["gp_train"]["model_type"] == 1:
-        model_dir += "sparse/"
-    elif config["gp_train"]["model_type"] == 2:
-        model_dir += "stochastic_variational/"
-    path_check(model_dir)
-    model_dir += f"{timestamp}/"
-    path_check(model_dir)
-    dicts["model_dir"] = model_dir
+    if if_compare:
+        model_dir += "compare/"
+        path_check(model_dir)
+        model_dir += f"{timestamp}/"
+        path_check(model_dir)
+        dicts["model_dir"] = model_dir
+    else:
+        if config["gp_train"]["model_type"] == 0:
+            model_dir += "multioutput/"
+        elif config["gp_train"]["model_type"] == 1:
+            model_dir += "sparse/"
+        elif config["gp_train"]["model_type"] == 2:
+            model_dir += "stochastic_variational/"
+        path_check(model_dir)
+        model_dir += f"{timestamp}/"
+        path_check(model_dir)
+        dicts["model_dir"] = model_dir
     
     eval_folder += f"{mode}_{timestamp}/"
     path_check(eval_folder)

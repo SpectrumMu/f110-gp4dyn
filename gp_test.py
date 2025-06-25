@@ -8,7 +8,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 x_data = np.zeros((1000, 2))
 x_data[:, 0] = np.random.uniform(0, 1, 1000)
 y_data = np.zeros((1000, 1))
-y_data[:, 0] = np.sin(2 * np.pi * x_data[:, 0]) + np.random.normal(0, 0.1, 1000)
+# Define a noise standard deviation that varies smoothly with x
+noise_std = 0.2 + 1.0 * np.exp(-((x_data[:, 0] - 0.2) ** 2) / 0.01) + 0.8 * np.exp(-((x_data[:, 0] - 0.35) ** 2) / 0.005)
+y_data[:, 0] = np.sin(2 * np.pi * x_data[:, 0]) + np.random.normal(0, noise_std)
+
 
 
 x_test = np.zeros((100, 2))
@@ -29,9 +32,9 @@ models = {
 for name, model in models.items():
     print(f"Training {name} model...")
     if name == 'multioutput':
-        model.train(X_train, Y_train, training_iter=50)
+        model.train(X_train, Y_train, training_iter=1000)
     else:
-        model.train(num_epochs=[50, 50, 50, 50], lr=0.1)
+        model.train(num_epochs=[100]*4, lr=0.1)
         
 results = {}
 for name, model in models.items():
@@ -42,6 +45,7 @@ for name, model in models.items():
         Y_lower.cpu().numpy(),
         Y_upper.cpu().numpy()
     )
+    print(f"{name} - Predicted mean: {Y_pred.mean().item():.2f}, Std: {Y_std.mean().item():.2f}")
     
 # Plot results
 plt.figure(figsize=(18, 5))
@@ -56,6 +60,8 @@ for i, (name, (Y_pred, Y_std, Y_lower, Y_upper)) in enumerate(results.items()):
     plt.grid()
     plt.ylim(-3, 3)
     plt.legend()
+    # print(f"{name} - Mean: {Y_pred.mean():.2f}, Std: {Y_std.mean():.2f}, Lower: {Y_lower.mean():.2f}, Upper: {Y_upper.mean():.2f}")
 plt.tight_layout()
 plt.savefig("/home/mu/workspace/roboracer/src/gp-ws/evaluate_out/simple_gp_validate_compare.png")
-plt.show()
+print("Done")
+# plt.show()
