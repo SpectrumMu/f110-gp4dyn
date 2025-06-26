@@ -9,7 +9,8 @@ x_data = np.zeros((1000, 2))
 x_data[:, 0] = np.random.uniform(0, 1, 1000)
 y_data = np.zeros((1000, 1))
 # Define a noise standard deviation that varies smoothly with x
-noise_std = 0.2 + 1.0 * np.exp(-((x_data[:, 0] - 0.2) ** 2) / 0.01) + 0.8 * np.exp(-((x_data[:, 0] - 0.35) ** 2) / 0.005)
+# noise_std = 0.2 + 1.0 * np.exp(-((x_data[:, 0] - 0.2) ** 2) / 0.01) + 0.8 * np.exp(-((x_data[:, 0] - 0.35) ** 2) / 0.005)
+noise_std = 0.2 + 0.8 * x_data[:, 0]  # Noise increases with x
 y_data[:, 0] = np.sin(2 * np.pi * x_data[:, 0]) + np.random.normal(0, noise_std)
 
 
@@ -32,7 +33,7 @@ models = {
 for name, model in models.items():
     print(f"Training {name} model...")
     if name == 'multioutput':
-        model.train(X_train, Y_train, training_iter=1000)
+        model.train(X_train, Y_train, training_iter=100)
     else:
         model.train(num_epochs=[100]*4, lr=0.1)
         

@@ -62,7 +62,7 @@ def main():
     if MODEL_TYPE == 0:
         gp_model.train(X_train, Y_train, training_iter=EPOCH, logger=logger, lr=LEARNING_RATE)
     elif MODEL_TYPE == 1:
-        gp_model.train(num_epochs=[EPOCH, EPOCH, EPOCH, 10], lr=LEARNING_RATE, logger=logger)
+        gp_model.train(num_epochs=[EPOCH, EPOCH, EPOCH, 30], lr=LEARNING_RATE, logger=logger)
     elif MODEL_TYPE == 2:
         gp_model.train(num_epochs=[EPOCH, EPOCH, EPOCH, 100], lr=LEARNING_RATE, logger=logger)
 

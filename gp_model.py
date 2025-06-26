@@ -37,6 +37,7 @@ Notes:
 - Multi-output is handled by independent GPs for each output dimension.
 - Training and prediction are performed on the specified device (CPU or GPU).
 """
+from pyexpat import model
 import torch
 import gpytorch
 from gpytorch.models import ExactGP
@@ -46,6 +47,8 @@ from gpytorch.mlls import ExactMarginalLogLikelihood
 from tqdm import tqdm
 # import logging 
 # from utils.logger import setup_logger, loss
+
+gpytorch.settings.cholesky_jitter.default_value = 1e-3
 
 class SingleOutputGPModel(ExactGP):
     def __init__(self, train_x, train_y, likelihood):
@@ -129,10 +132,9 @@ class SparseGPModel(gpytorch.models.ApproximateGP):
 
         self.mean_module = gpytorch.means.ZeroMean()
         self.covar_module = (
-            ScaleKernel(RBFKernel()) +
-            ScaleKernel(gpytorch.kernels.LinearKernel())
+            ScaleKernel(RBFKernel(ard_num_dims=inducing_points.size(-1))) +
+            ScaleKernel(LinearKernel(ard_num_dims=inducing_points.size(-1))) 
         )
-        # self.covar_module = ScaleKernel(RBFKernel()) 
 
     def forward(self, x):
         mean_x = self.mean_module(x)
@@ -210,91 +212,106 @@ class MultiOutputSparseGP:
         return torch.cat(preds, dim=-1), torch.cat(stds, dim=-1), torch.cat(lower, dim=-1), torch.cat(upper, dim=-1)
 
 class StochasticVariationalGP(gpytorch.models.ApproximateGP):
-    def __init__(self, inducing_points):
-        variational_distribution = gpytorch.variational.CholeskyVariationalDistribution(inducing_points.size(0))
-        variational_strategy = gpytorch.variational.VariationalStrategy(
-            self, inducing_points, variational_distribution, learn_inducing_locations=True
+    def __init__(self, input_dim, output_dim, num_latents, independent=False, num_inducing_points=256):
+        # Different inducing points for each latent function
+        inducing_points = torch.rand(num_latents, num_inducing_points, input_dim)
+        
+        # Mark the variational distribution as batch to learn one per latent
+        variational_distribution = gpytorch.variational.CholeskyVariationalDistribution(
+            inducing_points.size(-2), batch_shape=torch.Size([num_latents])
         )
+        
+        variational_strategy = None
+        if independent:
+            variational_strategy = gpytorch.variational.IndependentMultitaskVariationalStrategy(
+                gpytorch.variational.VariationalStrategy(
+                    self, inducing_points, variational_distribution, learn_inducing_locations=True
+                ),
+                num_tasks=output_dim,
+                latent_dim=-1,
+            )
+        else:
+            # Wrap the VariationalStrategy in an LMCVariationalStrategy
+            variational_strategy = gpytorch.variational.LMCVariationalStrategy(
+                gpytorch.variational.VariationalStrategy(
+                    self, inducing_points, variational_distribution, learn_inducing_locations=True
+                ),
+                num_tasks=output_dim,
+                num_latents=num_latents,
+                latent_dim=-1
+            )
+        
         super().__init__(variational_strategy)
-        self.mean_module = gpytorch.means.ZeroMean()
-        self.covar_module = (
-            ScaleKernel(RBFKernel()) +
-            ScaleKernel(LinearKernel())
+        
+        # Mean and covariance functions are set up with batch shape for each latent
+        self.mean_module = gpytorch.means.ConstantMean(batch_shape=torch.Size([num_latents]))
+        self.covar_module = gpytorch.kernels.ScaleKernel(
+            gpytorch.kernels.RBFKernel(batch_shape=torch.Size([num_latents])),
+            batch_shape=torch.Size([num_latents])
         )
-        # self.covar_module = ScaleKernel(RBFKernel()) 
-
+        
     def forward(self, x):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
     
 class MultiOutputStochasticVariationalGP:
-    def __init__(self, X_train, Y_train, num_inducing=128, device=None):
-        self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
-        self.models = []
-        self.likelihoods = []
-        self.X_train = X_train.to(self.device)
-        self.Y_train = Y_train.to(self.device)
+    def __init__(self, input_dim, output_dim, num_latents, independent=False, num_inducing_points=256, device=None):
+        if device is not None:
+            self.device = device
+        else:
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-        for i in tqdm(range(Y_train.shape[-1]), desc="Initializing Stochastic Variational GPs"):
-            inducing_points = self.X_train[:num_inducing].clone()
-            model = StochasticVariationalGP(inducing_points.to(self.device)).to(self.device)
-            likelihood = gpytorch.likelihoods.GaussianLikelihood().to(self.device)
-            self.models.append(model)
-            self.likelihoods.append(likelihood)
-            
-        print(f"Initialized {len(self.models)} Stochastic Variational GPs on device {self.device}")
+        self.model = StochasticVariationalGP(input_dim, output_dim, num_latents, independent, num_inducing_points)
+        self.likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=output_dim)
+
+        print(f"Initialized Stochastic Variational GP on device {self.device}")
 
     def train(self, num_epochs=None, batch_size=512, lr=0.01, logger=None):
-        self.models = [m.train() for m in self.models]
-        self.likelihoods = [l.train() for l in self.likelihoods]
-        
-        if num_epochs is None:
-            num_epochs = [500, 500, 500, 100]
-        if num_epochs[3] > 100:
-            num_epochs[3] = 100
+        self.model.train()
+        self.likelihood.train()
 
-        for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods)):
-            if logger:
-                logger.info(f"Training Stochastic Variational GP {i+1}/{len(self.models)}")
-            else:
-                print(f"Training Stochastic Variational GP {i+1}/{len(self.models)}")
-            optimizer = torch.optim.Adam([
-                {'params': model.parameters()},
-                {'params': likelihood.parameters()},
-            ], lr=lr)
+        if logger:
+            logger.info(f"Training Stochastic Variational GP {i+1}/{len(self.models)}")
+        else:
+            print(f"Training Stochastic Variational GP {i+1}/{len(self.models)}")
+        optimizer = torch.optim.Adam([
+                {'params': self.model.parameters()},
+                {'params': self.likelihood.parameters()},
+        ], lr=lr)
 
-            mll = gpytorch.mlls.VariationalELBO(likelihood, model, num_data=self.X_train.size(0))
+        mll = gpytorch.mlls.VariationalELBO(self.likelihood, self.model, num_data=self.X_train.size(0))
 
-            train_dataset = torch.utils.data.TensorDataset(self.X_train, self.Y_train[:, i])
-            train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        train_dataset = torch.utils.data.TensorDataset(self.X_train, self.Y_train)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-            for _ in tqdm(range(num_epochs[i]), desc=f"Training Stochastic Variational GP {i+1}"):
-                for x_batch, y_batch in train_loader:
-                    x_batch = x_batch.to(self.device)
-                    y_batch = y_batch.to(self.device)
+        for _ in tqdm(range(num_epochs), desc="Training Stochastic Variational GP"):
+            for x_batch, y_batch in train_loader:
+                x_batch = x_batch.to(self.device)
+                y_batch = y_batch.to(self.device)
 
-                    optimizer.zero_grad()
-                    output = model(x_batch)
-                    loss = -mll(output, y_batch)
-                    if logger is not None:
-                        logger.debug(f"Epoch {_+1} - Loss: {loss:.4f}")
+                optimizer.zero_grad()
+                output = self.model(x_batch)
+                loss = -mll(output, y_batch)
+                if logger is not None:
+                    logger.debug(f"Epoch {_+1} - Loss: {loss:.4f}")
                     loss.backward()
                     optimizer.step()
 
     def predict(self, X_test):
         X_test = X_test.to(self.device)
-        preds = []
-        stds = []
-        lower, upper = [], []
-        for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods
-        )):
-            model.eval()
-            likelihood.eval()
-            with torch.no_grad(), gpytorch.settings.fast_pred_var():
-                pred = likelihood(model(X_test))
-                preds.append(pred.mean.cpu().unsqueeze(-1))
-                stds.append(pred.stddev.cpu().unsqueeze(-1))
-                lower.append(pred.confidence_region()[0].cpu().unsqueeze(-1))
-                upper.append(pred.confidence_region()[1].cpu().unsqueeze(-1))
-        return torch.cat(preds, dim=-1), torch.cat(stds, dim=-1), torch.cat(lower, dim=-1), torch.cat(upper, dim=-1)
+        preds = None
+        stds = None
+        lower, upper = None
+        
+        self.model.eval()
+        self.likelihood.eval()
+
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            pred = self.likelihood(self.model(X_test))
+            preds = pred.mean.cpu().unsqueeze(-1)
+            stds = pred.stddev.cpu().unsqueeze(-1)
+            lower = pred.confidence_region()[0].cpu().unsqueeze(-1)
+            upper = pred.confidence_region()[1].cpu().unsqueeze(-1)
+        
+        return preds, stds, lower, upper
