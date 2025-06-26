@@ -62,9 +62,15 @@ def main():
     if MODEL_TYPE == 0:
         gp_model.train(X_train, Y_train, training_iter=EPOCH, logger=logger, lr=LEARNING_RATE)
     elif MODEL_TYPE == 1:
-        gp_model.train(num_epochs=[EPOCH, EPOCH, EPOCH, 30], lr=LEARNING_RATE, logger=logger)
+        gp_model.train(
+            X_train=X_train,
+            Y_train=Y_train,
+            num_epochs=EPOCH, lr=LEARNING_RATE, logger=logger)
     elif MODEL_TYPE == 2:
-        gp_model.train(num_epochs=[EPOCH, EPOCH, EPOCH, 100], lr=LEARNING_RATE, logger=logger)
+        gp_model.train(
+            X_train=X_train,
+            Y_train=Y_train,
+            num_epochs=EPOCH, lr=LEARNING_RATE, logger=logger)
 
     # === Save model ===
     name = "multioutput" if MODEL_TYPE == 0 else "sparse" if MODEL_TYPE == 1 else "stochastic_variational"
@@ -178,6 +184,9 @@ def data_load(logger, IF_NORM=True, SPLIT=0.2):
     X_train = np.concatenate([xk, uk], axis=-1)  # (N, 6)
     Y_train = yk                           # (N, 4)
 
+    logger.info(f"X_train shape: {X_train.shape}")
+    logger.info(f"Y_train shape: {Y_train.shape}")
+
     # Normalize X_train and Y_train
     x_scaler = StandardScaler()
     y_scaler = StandardScaler()
@@ -220,9 +229,23 @@ def create_model(model_type, X_train, Y_train, device, load_from_file=None):
     if model_type == 0:
         return MultiOutputGP(X_train, Y_train, device=device)
     elif model_type == 1:
-        return MultiOutputSparseGP(X_train, Y_train, num_inducing=128, device=device)
+        return MultiOutputSparseGP(
+            input_dim=X_train.shape[1],
+            output_dim=Y_train.shape[1],
+            num_latents=5,
+            independent=True,
+            num_inducing_points=512,
+            device=device
+        )
     elif model_type == 2:
-        return MultiOutputStochasticVariationalGP(X_train, Y_train, num_inducing=128, device=device)
+        return MultiOutputStochasticVariationalGP(
+            input_dim=X_train.shape[1],
+            output_dim=Y_train.shape[1],
+            num_latents=5,
+            independent=True,
+            num_inducing_points=256,
+            device=device
+        )
     else:
         raise ValueError("Invalid model type specified.")
 

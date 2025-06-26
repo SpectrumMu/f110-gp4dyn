@@ -123,93 +123,106 @@ class MultiOutputGP:
 
 
 class SparseGPModel(gpytorch.models.ApproximateGP):
-    def __init__(self, inducing_points):
-        variational_distribution = gpytorch.variational.CholeskyVariationalDistribution(inducing_points.size(0))
-        variational_strategy = gpytorch.variational.VariationalStrategy(
-            self, inducing_points, variational_distribution, learn_inducing_locations=True
+    def __init__(self, input_dim, output_dim, num_latents, independent=False, num_inducing_points=256):
+        # Initialize inducing points for each latent function
+        inducing_points = torch.rand(num_latents, num_inducing_points, input_dim)
+        
+        # Variational distribution with batch shape for each latent
+        variational_distribution = gpytorch.variational.CholeskyVariationalDistribution(
+            inducing_points.size(-2), batch_shape=torch.Size([num_latents])
         )
+        
+        # Choose variational strategy
+        if independent:
+            variational_strategy = gpytorch.variational.IndependentMultitaskVariationalStrategy(
+                gpytorch.variational.VariationalStrategy(
+                    self, inducing_points, variational_distribution, learn_inducing_locations=True
+                ),
+                num_tasks=output_dim
+                # latent_dim=-1,
+            )
+        else:
+            variational_strategy = gpytorch.variational.LMCVariationalStrategy(
+                gpytorch.variational.VariationalStrategy(
+                    self, inducing_points, variational_distribution, learn_inducing_locations=True
+                ),
+                num_tasks=output_dim,
+                num_latents=num_latents,
+                latent_dim=-1
+            )
+        
         super().__init__(variational_strategy)
-
-        self.mean_module = gpytorch.means.ZeroMean()
-        self.covar_module = (
-            ScaleKernel(RBFKernel(ard_num_dims=inducing_points.size(-1))) +
-            ScaleKernel(LinearKernel(ard_num_dims=inducing_points.size(-1))) 
+        
+        # Mean and covariance modules with batch shape for each latent
+        self.mean_module = gpytorch.means.ConstantMean(batch_shape=torch.Size([num_latents]))
+        self.covar_module = gpytorch.kernels.ScaleKernel(
+            gpytorch.kernels.RBFKernel(
+                # nu=2.5,  # Matern kernel with nu=2.5
+                ard_num_dims=inducing_points.size(2),
+                batch_shape=torch.Size([num_latents])
+            )
+            + gpytorch.kernels.RBFKernel(
+                ard_num_dims=inducing_points.size(2),
+                batch_shape=torch.Size([num_latents])
+            )   
         )
-
+        
     def forward(self, x):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
     
 class MultiOutputSparseGP:
-    def __init__(self, X_train, Y_train, num_inducing=128, device=None):
+    def __init__(self, input_dim, output_dim, num_latents, independent=False, num_inducing_points=256, device=None):
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
-        self.models = []
-        self.likelihoods = []
-        self.X_train = X_train.to(self.device)
-        self.Y_train = Y_train.to(self.device)
+        self.model = SparseGPModel(input_dim, output_dim, num_latents, independent, num_inducing_points).to(self.device)
+        self.likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=output_dim).to(self.device)
+        print(f"Initialized MultiOutputSparseGP on device {self.device}")
 
-        for i in tqdm(range(Y_train.shape[-1]), desc="Initializing Sparse GPs"):
-            inducing_points = self.X_train[:num_inducing].clone()
-            model = SparseGPModel(inducing_points.to(self.device)).to(self.device)
-            likelihood = gpytorch.likelihoods.GaussianLikelihood().to(self.device)
-            self.models.append(model)
-            self.likelihoods.append(likelihood)
-            
-        print(f"Initialized {len(self.models)} Sparse GPs on device {self.device}")
+    def train(self, X_train, Y_train, num_epochs=100, batch_size=512, lr=0.01, logger=None):
+        self.model.train()
+        self.likelihood.train()
 
-    def train(self, num_epochs=None, batch_size=512, lr=0.01, logger=None):
-        self.models = [m.train() for m in self.models]
-        self.likelihoods = [l.train() for l in self.likelihoods]
-        
-        if num_epochs is None:
-            num_epochs = [500, 500, 500, 100]
-        if num_epochs[3] > 100:
-            num_epochs[3] = 100
+        X_train = X_train.to(self.device)
+        Y_train = Y_train.to(self.device)
 
-        for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods)):
-            if logger:
-                logger.info(f"Training Sparse GP {i+1}/{len(self.models)}")
-            else:
-                print(f"Training Sparse GP {i+1}/{len(self.models)}")
-            optimizer = torch.optim.Adam([
-                {'params': model.parameters()},
-                {'params': likelihood.parameters()},
-            ], lr=lr)
+        optimizer = torch.optim.Adam([
+            {'params': self.model.parameters()},
+            {'params': self.likelihood.parameters()},
+        ], lr=lr)
 
-            mll = gpytorch.mlls.VariationalELBO(likelihood, model, num_data=self.X_train.size(0))
+        mll = gpytorch.mlls.VariationalELBO(self.likelihood, self.model, num_data=X_train.size(0))
 
-            train_dataset = torch.utils.data.TensorDataset(self.X_train, self.Y_train[:, i])
-            train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        train_dataset = torch.utils.data.TensorDataset(X_train, Y_train)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-            for epoch in tqdm(range(num_epochs[i]), desc=f"Training Sparse GP {i+1}"):
-                for x_batch, y_batch in train_loader:
-                    x_batch = x_batch.to(self.device)
-                    y_batch = y_batch.to(self.device)
+        for epoch in tqdm(range(num_epochs), desc="Training MultiOutputSparseGP"):
+            for x_batch, y_batch in train_loader:
+                x_batch = x_batch.to(self.device)
+                y_batch = y_batch.to(self.device)
 
-                    optimizer.zero_grad()
-                    output = model(x_batch)
-                    loss = -mll(output, y_batch)
-                    if logger is not None:
-                        logger.debug(f"Epoch {epoch+1} - Loss: {loss:.4f}")
-                    loss.backward()
-                    optimizer.step()
+                optimizer.zero_grad()
+                output = self.model(x_batch)
+                loss = -mll(output, y_batch)
+                if logger:
+                    logger.debug(f"Epoch {epoch+1} - Loss: {loss.item():.4f}")
+                loss.backward()
+                optimizer.step()
 
     def predict(self, X_test):
+        self.model.eval()
+        self.likelihood.eval()
+
         X_test = X_test.to(self.device)
-        preds = []
-        stds = []
-        lower, upper = [], []
-        for i, (model, likelihood) in enumerate(zip(self.models, self.likelihoods)):
-            model.eval()
-            likelihood.eval()
-            with torch.no_grad(), gpytorch.settings.fast_pred_var():
-                pred = likelihood(model(X_test))
-                preds.append(pred.mean.cpu().unsqueeze(-1))
-                stds.append(pred.stddev.cpu().unsqueeze(-1))
-                lower.append(pred.confidence_region()[0].cpu().unsqueeze(-1))
-                upper.append(pred.confidence_region()[1].cpu().unsqueeze(-1))
-        return torch.cat(preds, dim=-1), torch.cat(stds, dim=-1), torch.cat(lower, dim=-1), torch.cat(upper, dim=-1)
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            pred = self.likelihood(self.model(X_test))
+            preds = pred.mean.cpu()
+            stds = pred.stddev.cpu()
+            lower, upper = pred.confidence_region()
+            lower = lower.cpu()
+            upper = upper.cpu()
+
+        return preds, stds, lower, upper
 
 class StochasticVariationalGP(gpytorch.models.ApproximateGP):
     def __init__(self, input_dim, output_dim, num_latents, independent=False, num_inducing_points=256):
@@ -228,7 +241,7 @@ class StochasticVariationalGP(gpytorch.models.ApproximateGP):
                     self, inducing_points, variational_distribution, learn_inducing_locations=True
                 ),
                 num_tasks=output_dim,
-                latent_dim=-1,
+                # latent_dim=-1,
             )
         else:
             # Wrap the VariationalStrategy in an LMCVariationalStrategy
