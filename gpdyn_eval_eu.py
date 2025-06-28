@@ -64,10 +64,12 @@ def main():
     y_scaler = None
     with open(MODELDIR + model_name, "rb") as f:
         loaded_model = pickle.load(f)
-    with open(MODELDIR + scaler_name, "rb") as f:
-        scalers = pickle.load(f)
-        x_scaler = scalers["x_scaler"]
-        y_scaler = scalers["y_scaler"]
+        
+    if IF_NORM:
+        with open(MODELDIR + scaler_name, "rb") as f:
+            scalers = pickle.load(f)
+            x_scaler = scalers["x_scaler"]
+            y_scaler = scalers["y_scaler"]
     # loaded_model.to(device)
 
     logger.info("Model loaded.")
@@ -76,7 +78,7 @@ def main():
     X_train, X_test, Y_train, Y_test = data_load(x_scaler, y_scaler, IF_NORM, logger, device)
 
     if EVAL_TYPE == 0:
-        eval_type_0(loaded_model, X_test, Y_test, x_scaler, y_scaler)
+        eval_type_0(loaded_model, X_test, Y_test, IF_NORM, x_scaler, y_scaler)
     else:
         eval_type_1(loaded_model, X_train, Y_train, X_test, logger)
     pass
@@ -131,7 +133,7 @@ def data_load(x_scaler, y_scaler, IF_NORM, logger, device):
     
     return X_train, X_test, Y_train, Y_test
 
-def eval_type_0(loaded_model, X_test, Y_test, x_scaler=None, y_scaler=None):
+def eval_type_0(loaded_model, X_test, Y_test, IF_NORM, x_scaler=None, y_scaler=None):
     # # === Predict and Evaluate ===
     Y_pred, Y_std, _, _ = loaded_model.predict(X_test)
 
@@ -139,10 +141,11 @@ def eval_type_0(loaded_model, X_test, Y_test, x_scaler=None, y_scaler=None):
     Y_std = Y_std.cpu().numpy()
     
     Y_test = Y_test.cpu().numpy()
-    
-    Y_pred = y_scaler.inverse_transform(Y_pred)
-    Y_std = y_scaler.inverse_transform(Y_std)
-    Y_test = y_scaler.inverse_transform(Y_test)
+
+    if IF_NORM:
+        Y_pred = y_scaler.inverse_transform(Y_pred)
+        Y_std = y_scaler.inverse_transform(Y_std)
+        Y_test = y_scaler.inverse_transform(Y_test)
     
     # === Evaluation ===
     num_outputs = Y_test.shape[-1]

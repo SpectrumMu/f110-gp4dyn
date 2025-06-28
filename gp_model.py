@@ -156,17 +156,23 @@ class SparseGPModel(gpytorch.models.ApproximateGP):
         # Mean and covariance modules with batch shape for each latent
         self.mean_module = gpytorch.means.ConstantMean(batch_shape=torch.Size([num_latents]))
         self.covar_module = gpytorch.kernels.ScaleKernel(
-            gpytorch.kernels.RBFKernel(
-                # nu=2.5,  # Matern kernel with nu=2.5
+            gpytorch.kernels.MaternKernel(
+                nu=0.5,
                 ard_num_dims=inducing_points.size(2),
                 batch_shape=torch.Size([num_latents])
             )
-            + gpytorch.kernels.RBFKernel(
-                ard_num_dims=inducing_points.size(2),
-                batch_shape=torch.Size([num_latents])
-            )   
+            # + 
+            # gpytorch.kernels.RBFKernel(
+            #     ard_num_dims=inducing_points.size(2),
+            #     batch_shape=torch.Size([num_latents])
+            # )   
+            # +
+            # gpytorch.kernels.LinearKernel(
+            #     ard_num_dims=inducing_points.size(2),
+            #     batch_shape=torch.Size([num_latents])
+            # )
         )
-        
+
     def forward(self, x):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
@@ -259,8 +265,11 @@ class StochasticVariationalGP(gpytorch.models.ApproximateGP):
         # Mean and covariance functions are set up with batch shape for each latent
         self.mean_module = gpytorch.means.ConstantMean(batch_shape=torch.Size([num_latents]))
         self.covar_module = gpytorch.kernels.ScaleKernel(
-            gpytorch.kernels.RBFKernel(batch_shape=torch.Size([num_latents])),
-            batch_shape=torch.Size([num_latents])
+            gpytorch.kernels.MaternKernel(
+                nu=2.5,
+                ard_num_dims=inducing_points.size(2),
+                batch_shape=torch.Size([num_latents])
+            )
         )
         
     def forward(self, x):
@@ -270,32 +279,28 @@ class StochasticVariationalGP(gpytorch.models.ApproximateGP):
     
 class MultiOutputStochasticVariationalGP:
     def __init__(self, input_dim, output_dim, num_latents, independent=False, num_inducing_points=256, device=None):
-        if device is not None:
-            self.device = device
-        else:
-            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
 
-        self.model = StochasticVariationalGP(input_dim, output_dim, num_latents, independent, num_inducing_points)
-        self.likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=output_dim)
+        self.model = StochasticVariationalGP(input_dim, output_dim, num_latents, independent, num_inducing_points).to(self.device)
+        self.likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=output_dim).to(self.device)
 
         print(f"Initialized Stochastic Variational GP on device {self.device}")
 
-    def train(self, num_epochs=None, batch_size=512, lr=0.01, logger=None):
+    def train(self, X_train, Y_train, num_epochs=None, batch_size=512, lr=0.01, logger=None):
         self.model.train()
         self.likelihood.train()
 
-        if logger:
-            logger.info(f"Training Stochastic Variational GP {i+1}/{len(self.models)}")
-        else:
-            print(f"Training Stochastic Variational GP {i+1}/{len(self.models)}")
+        X_train = X_train.to(self.device)
+        Y_train = Y_train.to(self.device)
+
         optimizer = torch.optim.Adam([
                 {'params': self.model.parameters()},
                 {'params': self.likelihood.parameters()},
         ], lr=lr)
 
-        mll = gpytorch.mlls.VariationalELBO(self.likelihood, self.model, num_data=self.X_train.size(0))
+        mll = gpytorch.mlls.VariationalELBO(self.likelihood, self.model, num_data=X_train.size(0))
 
-        train_dataset = torch.utils.data.TensorDataset(self.X_train, self.Y_train)
+        train_dataset = torch.utils.data.TensorDataset(X_train, Y_train)
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
         for _ in tqdm(range(num_epochs), desc="Training Stochastic Variational GP"):
@@ -312,19 +317,16 @@ class MultiOutputStochasticVariationalGP:
                     optimizer.step()
 
     def predict(self, X_test):
-        X_test = X_test.to(self.device)
-        preds = None
-        stds = None
-        lower, upper = None
-        
         self.model.eval()
         self.likelihood.eval()
 
+        X_test = X_test.to(self.device)
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             pred = self.likelihood(self.model(X_test))
-            preds = pred.mean.cpu().unsqueeze(-1)
-            stds = pred.stddev.cpu().unsqueeze(-1)
-            lower = pred.confidence_region()[0].cpu().unsqueeze(-1)
-            upper = pred.confidence_region()[1].cpu().unsqueeze(-1)
+            preds = pred.mean.cpu()
+            stds = pred.stddev.cpu()
+            lower, upper = pred.confidence_region()
+            lower = lower.cpu()
+            upper = upper.cpu()
         
         return preds, stds, lower, upper

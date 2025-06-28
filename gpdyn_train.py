@@ -30,10 +30,10 @@ def main():
     TIME_STAMP = path_dict["timestamp"]
     # Model info
     IF_NORM = config["gp_train"]["if_norm"]
-    MODEL_TYPE = int(config["gp_train"]["model_type"])
+    MODEL_TYPE = int(config["gp_train"]["model"]["type"])
     SPLIT = float(config["gp_train"]["train_test_split"])
     EPOCH = int(config["gp_train"]["epoch"])
-    LEARNING_RATE = float(config["gp_train"]["learning_rate"])
+    LEARNING_RATE = float(config["gp_train"]["model"]["learning_rate"])
 
     # Increase max CG iterations and adjust tolerance
     max_cg_iterations(2000)  # Increase the maximum iterations
@@ -53,8 +53,8 @@ def main():
     # === Train model ===
     gp_model = None
     try:
-        gp_model = create_model(MODEL_TYPE, X_train, Y_train, device)
-        logger.info(f"Created model of type {MODEL_TYPE} on device {device}")
+        gp_model = create_model(config["gp_train"], X_train, Y_train, device)
+        logger.info(f"Created model of type {config['gp_train']['model']['type']} on device {device}")
     except Exception as e:
         logger.error(f"Failed to create model: {e}")
         return
@@ -172,17 +172,17 @@ def data_load(logger, IF_NORM=True, SPLIT=0.2):
         raise ValueError("NaN or Inf values found in train_dynamics")
 
     # Assume you only have one friction class, drop the first dim
-    states = train_states[0]    # (N, 2, 4)
+    states = train_states[0]    # (N, 2, 5)
     controls = train_controls[0]  # (N, 1, 2)
-    dynamics = train_dynamics[0]  # (N, 1, 4)
+    dynamics = train_dynamics[0]  # (N, 1, 5)
 
-    xk = states[:, 0, :]     # (N, 4)
+    xk = states[:, 0, :]     # (N, 5)
     uk = controls[:, 0, :]   # (N, 2)
-    xk1 = states[:, 1, :]    # (N, 4)
-    yk = dynamics[:, 0, :]  # (N, 4)
+    xk1 = states[:, 1, :]    # (N, 5)
+    yk = dynamics[:, 0, :]  # (N, 5)
 
-    X_train = np.concatenate([xk, uk], axis=-1)  # (N, 6)
-    Y_train = yk                           # (N, 4)
+    X_train = np.concatenate([xk, uk], axis=-1)  # (N, 7)
+    Y_train = yk  # (N, 5), select columns 0, 1, 3, 4
 
     logger.info(f"X_train shape: {X_train.shape}")
     logger.info(f"Y_train shape: {Y_train.shape}")
@@ -206,7 +206,7 @@ def data_load(logger, IF_NORM=True, SPLIT=0.2):
 
     return X_train, Y_train, X_test, Y_test, x_scaler, y_scaler
 
-def create_model(model_type, X_train, Y_train, device, load_from_file=None):
+def create_model(config, X_train, Y_train, device, load_from_file=None):
     """
     Create a GP model based on the specified type.
     
@@ -226,24 +226,29 @@ def create_model(model_type, X_train, Y_train, device, load_from_file=None):
             gp_model.to(device)
             return gp_model
 
+    model_type = int(config["model"]["type"])
+    learning_rate = float(config["model"]["learning_rate"])
+    inducing = int(config["model"]["inducing"])
+    independent = bool(config["model"]["independent"])
+
     if model_type == 0:
         return MultiOutputGP(X_train, Y_train, device=device)
     elif model_type == 1:
         return MultiOutputSparseGP(
             input_dim=X_train.shape[1],
             output_dim=Y_train.shape[1],
-            num_latents=5,
-            independent=True,
-            num_inducing_points=512,
+            num_latents=Y_train.shape[1],
+            independent=independent,
+            num_inducing_points=inducing,
             device=device
         )
     elif model_type == 2:
         return MultiOutputStochasticVariationalGP(
             input_dim=X_train.shape[1],
             output_dim=Y_train.shape[1],
-            num_latents=5,
-            independent=True,
-            num_inducing_points=256,
+            num_latents=Y_train.shape[1],
+            independent=independent,
+            num_inducing_points=inducing,
             device=device
         )
     else:

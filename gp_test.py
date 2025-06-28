@@ -1,4 +1,5 @@
 import numpy as np
+from sympy import true
 import torch
 import matplotlib.pyplot as plt
 from gp_model import MultiOutputGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP
@@ -26,8 +27,22 @@ X_test = torch.tensor(x_test, dtype=torch.float32).to(device)
 # Standard Multi-Output GP
 models = {
     'multioutput': MultiOutputGP(X_train, Y_train, device=device),
-    'sparse': MultiOutputSparseGP(X_train, Y_train, num_inducing=128, device=device),
-    'stochastic_variational': MultiOutputStochasticVariationalGP(X_train, Y_train, num_inducing=128, device=device)
+    'sparse': MultiOutputSparseGP(
+            input_dim=X_train.shape[1],
+            output_dim=Y_train.shape[1],
+            num_latents=Y_train.shape[1],
+            independent=True,
+            num_inducing_points=128,
+            device=device
+        ),
+    'stochastic_variational': MultiOutputStochasticVariationalGP(
+            input_dim=X_train.shape[1],
+            output_dim=Y_train.shape[1],
+            num_latents=Y_train.shape[1],
+            independent=True,
+            num_inducing_points=128,
+            device=device
+        )
 }
 
 for name, model in models.items():
@@ -35,7 +50,7 @@ for name, model in models.items():
     if name == 'multioutput':
         model.train(X_train, Y_train, training_iter=100)
     else:
-        model.train(num_epochs=[100]*4, lr=0.1)
+        model.train(X_train, Y_train, num_epochs=100, lr=0.1)
         
 results = {}
 for name, model in models.items():
