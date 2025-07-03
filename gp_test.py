@@ -2,7 +2,7 @@ import numpy as np
 from sympy import true
 import torch
 import matplotlib.pyplot as plt
-from gp_model import MultiOutputExactGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP
+from gp_model import MultiOutputExactGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP, MultiOutputSparseHeteroskedasticGP
 from dotenv import load_dotenv
 import os
 load_dotenv()
@@ -51,6 +51,13 @@ models = {
             independent=True,
             num_inducing_points=128,
             device=device
+        ),
+    'sparse_heteroskedastic': MultiOutputSparseHeteroskedasticGP(
+            input_dim=X_train.shape[1],
+            output_dim=Y_train.shape[1],
+            num_latents=Y_train.shape[1],
+            num_inducing_points=128,
+            device=device
         )
 }
 
@@ -73,9 +80,9 @@ for name, model in models.items():
     print(f"{name} - Predicted mean: {Y_pred.mean().item():.2f}, Std: {Y_std.mean().item():.2f}")
     
 # Plot results
-plt.figure(figsize=(18, 5))
+plt.figure(figsize=(24, 5))
 for i, (name, (Y_pred, Y_std, Y_lower, Y_upper)) in enumerate(results.items()):
-    plt.subplot(1, 3, i + 1)
+    plt.subplot(1, 4, i + 1)
     plt.title(f"{name} GP")
     plt.fill_between(x_test[:, 0], Y_lower[:, 0], Y_upper[:, 0], alpha=0.3, label='Confidence Interval')
     plt.plot(x_test[:, 0], Y_pred[:, 0], 'r-', label='Prediction')
