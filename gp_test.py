@@ -2,7 +2,12 @@ import numpy as np
 from sympy import true
 import torch
 import matplotlib.pyplot as plt
-from gp_model import MultiOutputGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP
+from gp_model import MultiOutputExactGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP
+from dotenv import load_dotenv
+import os
+load_dotenv()
+home = os.getenv("MY_WS_HOME")
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -26,7 +31,11 @@ X_test = torch.tensor(x_test, dtype=torch.float32).to(device)
 
 # Standard Multi-Output GP
 models = {
-    'multioutput': MultiOutputGP(X_train, Y_train, device=device),
+    'multioutput': MultiOutputExactGP(
+            X_train=X_train,
+            Y_train=Y_train,
+            device=device
+    ),
     'sparse': MultiOutputSparseGP(
             input_dim=X_train.shape[1],
             output_dim=Y_train.shape[1],
@@ -48,7 +57,7 @@ models = {
 for name, model in models.items():
     print(f"Training {name} model...")
     if name == 'multioutput':
-        model.train(X_train, Y_train, training_iter=100)
+        model.train(X_train, Y_train, training_iter=100, lr=0.1)
     else:
         model.train(X_train, Y_train, num_epochs=100, lr=0.1)
         
@@ -78,6 +87,6 @@ for i, (name, (Y_pred, Y_std, Y_lower, Y_upper)) in enumerate(results.items()):
     plt.legend()
     # print(f"{name} - Mean: {Y_pred.mean():.2f}, Std: {Y_std.mean():.2f}, Lower: {Y_lower.mean():.2f}, Upper: {Y_upper.mean():.2f}")
 plt.tight_layout()
-plt.savefig("/home/mu/workspace/roboracer/src/gp-ws/evaluate_out/simple_gp_validate_compare.png")
+plt.savefig(f"{home}src/gp-ws/evaluate_out/simple_gp_validate_compare.png")
 print("Done")
 # plt.show()

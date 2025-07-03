@@ -4,7 +4,7 @@ from re import X
 import torch
 import numpy as np
 import pickle
-from gp_model import MultiOutputGP, MultiOutputSparseGP
+from gp_model import MultiOutputExactGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 # from sklearn.metrics import mean_squared_error  # noqa: E402
@@ -17,15 +17,19 @@ import datetime
 import os
 import logging
 
+from dotenv import load_dotenv
+load_dotenv()
+home_dir = os.getenv("MY_WS_HOME")
+
 def main():
     # === Load configuration ===
     config = load_yaml_config("./config/config.yaml")
     
     global DATADIR, MODELDIR, EVALDIR, LOGDIR, TIME_STAMP
     # MODELDIR = config["global"]["model_folder"]
-    EVALDIR = config["global"]["eval_folder"]
-    DATADIR = config["global"]["data_folder"]
-    LOGDIR = config["global"]["log_folder"]
+    EVALDIR = home_dir + config["global"]["eval_folder"]
+    DATADIR = home_dir + config["global"]["data_folder"]
+    LOGDIR = home_dir + config["global"]["log_folder"]
     LOGDIR = os.path.join(LOGDIR, "eval_logs/")
     if not os.path.exists(LOGDIR):
         os.makedirs(LOGDIR)
@@ -47,7 +51,7 @@ def main():
     model_name += ".pkl"
     scaler_name = "scaler.pkl"
 
-    MODELDIR = config["gp_eval"]["model_dir"]
+    MODELDIR = home_dir + config["gp_eval"]["model_dir"]
     
     logger = setup_logger(
         name="eval_logger",

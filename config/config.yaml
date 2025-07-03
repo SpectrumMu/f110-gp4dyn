@@ -1,34 +1,37 @@
 global:
-  data_folder: "/home/mu/workspace/roboracer/data/kine_rand_uniform/"
-  # data_folder: "/home/mu/workspace/roboracer/data/rand_validation/"
-  model_folder: "/home/mu/workspace/roboracer/src/gp-ws/models/"
-  eval_folder: "/home/mu/workspace/roboracer/src/gp-ws/evaluate_out/"
-  log_folder: "/home/mu/workspace/roboracer/src/gp-ws/logs/"
+  data_folder: "data/kine_rand_uniform/"
+  # data_folder: "data/rand_validation/"
+  model_folder: "src/gp-ws/models/"
+  eval_folder: "src/gp-ws/evaluate_out/"
+  log_folder: "src/gp-ws/logs/"
 
 compare_config:
   if_norm: True
   c: 3000
   train_test_split: 0.8
-  epoch: 300
+  epoch: 500
   learning_rate: 0.1
   
 gp_train:
-  if_norm: false 
+  if_norm: true  # Enable normalization for better numerical stability
   train_test_split: 0.8
-  epoch: 50
+  epoch: 1000     # Increase for better convergence
   model:
-    type: 2
-    learning_rate: 0.1
-    inducing: 500
-    independent: true
+    type: 1
+    learning_rate: 0.01  # Reduce learning rate for more stable training
+    inducing: 800        # Increase inducing points for better approximation
+    independent: true   # Try correlated outputs first
+    batch_size: 256      # Reduce batch size for more stable gradients
+    patience: 50         # Early stopping patience
+    kernel_type: "composite"  # Use composite kernel (Matern + RBF + Linear)
 
 gp_eval:
-  model_dir: "/home/mu/workspace/roboracer/src/gp-ws/models/sparse/20250627_175029/"
+  model_dir: "src/gp-ws/models/sparse/20250702_190840/"
   model_type: 1
-  if_norm: false
+  if_norm: true
   eval_type: 0
 
 eval_sim:
-  model_dir: "/home/mu/workspace/roboracer/src/gp-ws/models/sparse/20250627_154019/"
+  model_dir: "src/gp-ws/models/sparse/20250627_154019/"
   model_type: 1
   if_norm: True

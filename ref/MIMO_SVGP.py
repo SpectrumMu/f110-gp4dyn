@@ -18,7 +18,7 @@ class MIMO_SVGPModel(gpytorch.models.ApproximateGP):
                     self, inducing_points, variational_distribution, learn_inducing_locations=True
                 ),
                 num_tasks=output_dim,
-                latent_dim=-1,
+                # latent_dim=-1,
             )
         else:
             # Wrap the VariationalStrategy in an LMCVariationalStrategy

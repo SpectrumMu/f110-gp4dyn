@@ -1,19 +1,23 @@
 import torch
 import numpy as np
 import pickle
-from gp_model import MultiOutputGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP
+from gp_model import MultiOutputExactGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 # from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from linear_operator.settings import max_cg_iterations, cg_tolerance
 # import yaml
 import json
 # import datetime
-# import os
+import os
 # import logging
 from utils.utils import prepare, load_yaml_config
 from utils.logger import setup_logger
+import dotenv
+
+dotenv.load_dotenv()  # automatically loads from .env in current dir
+ws_home = os.getenv("MY_WS_HOME")
 
 def main():
     # === Load configuration ===
@@ -23,7 +27,7 @@ def main():
     path_dict = prepare(config, "train")
     # Some path
     global DATADIR, MODELDIR, EVALDIR, LOGDIR, TIME_STAMP
-    DATADIR = config["global"]["data_folder"]
+    DATADIR = ws_home + config["global"]["data_folder"]
     MODELDIR = path_dict["model_dir"]
     EVALDIR = path_dict["eval_folder"]
     LOGDIR = path_dict["log_folder"]
@@ -34,6 +38,8 @@ def main():
     SPLIT = float(config["gp_train"]["train_test_split"])
     EPOCH = int(config["gp_train"]["epoch"])
     LEARNING_RATE = float(config["gp_train"]["model"]["learning_rate"])
+    BATCH_SIZE = int(config["gp_train"]["model"].get("batch_size", 512))
+    PATIENCE = int(config["gp_train"]["model"].get("patience", 50))
 
     # Increase max CG iterations and adjust tolerance
     max_cg_iterations(2000)  # Increase the maximum iterations
@@ -65,12 +71,18 @@ def main():
         gp_model.train(
             X_train=X_train,
             Y_train=Y_train,
-            num_epochs=EPOCH, lr=LEARNING_RATE, logger=logger)
+            num_epochs=EPOCH, 
+            batch_size=BATCH_SIZE,
+            lr=LEARNING_RATE, 
+            logger=logger)
     elif MODEL_TYPE == 2:
         gp_model.train(
             X_train=X_train,
             Y_train=Y_train,
-            num_epochs=EPOCH, lr=LEARNING_RATE, logger=logger)
+            num_epochs=EPOCH, 
+            batch_size=BATCH_SIZE,
+            lr=LEARNING_RATE, 
+            logger=logger)
 
     # === Save model ===
     name = "multioutput" if MODEL_TYPE == 0 else "sparse" if MODEL_TYPE == 1 else "stochastic_variational"
@@ -91,7 +103,7 @@ def main():
         "train_data_shape": X_train.shape,
         "test_data_shape": X_test.shape,
         "num_train_samples": X_train.shape[0],
-        "subset_indices": indices.tolist() if 'indices' in locals() else None,
+        "subset_indices": None,  # Remove undefined indices reference
         "X_train_shape": X_train.shape,
         "Y_train_shape": Y_train.shape,
         "X_test_shape": X_test.shape,
@@ -151,7 +163,7 @@ def data_load(logger, IF_NORM=True, SPLIT=0.2):
         - Concatenates state and control vectors for input features.
         - Splits the data into training and testing sets using sklearn's train_test_split.
     """
-    
+
     train_data = np.load(DATADIR + 'train_data.npz')
     train_states = train_data['train_states']
     train_controls = train_data['train_controls']
@@ -188,8 +200,8 @@ def data_load(logger, IF_NORM=True, SPLIT=0.2):
     logger.info(f"Y_train shape: {Y_train.shape}")
 
     # Normalize X_train and Y_train
-    x_scaler = StandardScaler()
-    y_scaler = StandardScaler()
+    x_scaler = MinMaxScaler()
+    y_scaler = MinMaxScaler()
 
     if IF_NORM:
         X_train = x_scaler.fit_transform(X_train)
@@ -232,7 +244,7 @@ def create_model(config, X_train, Y_train, device, load_from_file=None):
     independent = bool(config["model"]["independent"])
 
     if model_type == 0:
-        return MultiOutputGP(X_train, Y_train, device=device)
+        return MultiOutputExactGP(X_train, Y_train, device=device)
     elif model_type == 1:
         return MultiOutputSparseGP(
             input_dim=X_train.shape[1],

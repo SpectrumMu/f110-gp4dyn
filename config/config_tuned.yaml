@@ -1,0 +1,72 @@
+global:
+  data_folder: "data/kine_rand_uniform/"
+  model_folder: "src/gp-ws/models/"
+  eval_folder: "src/gp-ws/evaluate_out/"
+  log_folder: "src/gp-ws/logs/"
+
+# Configuration with aggressive tuning for better performance
+gp_train_aggressive:
+  if_norm: true
+  train_test_split: 0.8
+  epoch: 500
+  model:
+    type: 1
+    learning_rate: 0.005    # Even lower learning rate
+    inducing: 1000          # More inducing points
+    independent: false
+    batch_size: 128         # Smaller batches
+    patience: 75
+    kernel_type: "composite"
+
+# Configuration with conservative tuning for stability
+gp_train_conservative:
+  if_norm: true
+  train_test_split: 0.8
+  epoch: 200
+  model:
+    type: 1
+    learning_rate: 0.02     # Slightly higher learning rate
+    inducing: 600           # Moderate inducing points
+    independent: true       # Independent outputs
+    batch_size: 512         # Larger batches
+    patience: 30
+    kernel_type: "matern"
+
+# Configuration for independent output modeling
+gp_train_independent:
+  if_norm: true
+  train_test_split: 0.8
+  epoch: 300
+  model:
+    type: 1
+    learning_rate: 0.01
+    inducing: 800
+    independent: true       # Model outputs independently
+    batch_size: 256
+    patience: 50
+    kernel_type: "composite"
+
+# Updated default configuration
+gp_train:
+  if_norm: true
+  train_test_split: 0.8
+  epoch: 300
+  model:
+    type: 1
+    learning_rate: 0.01
+    inducing: 800
+    independent: false
+    batch_size: 256
+    patience: 50
+    kernel_type: "composite"
+
+gp_eval:
+  model_dir: "src/gp-ws/models/sparse/20250627_175029/"
+  model_type: 1
+  if_norm: true  # Updated to match training
+  eval_type: 0
+
+eval_sim:
+  model_dir: "src/gp-ws/models/sparse/20250627_154019/"
+  model_type: 1
+  if_norm: true

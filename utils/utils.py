@@ -1,6 +1,10 @@
 import os
 import yaml
 import datetime
+import dotenv
+
+dotenv.load_dotenv()  # automatically loads from .env in current dir
+ws_home = os.getenv("MY_WS_HOME")
 
 
 def path_check(path: str) -> None:
@@ -58,9 +62,9 @@ def prepare(config: dict, mode: str, if_compare=0) -> dict:
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     dicts["timestamp"] = timestamp
 
-    model_dir = config["global"]["model_folder"]
-    eval_folder = config["global"]["eval_folder"]
-    log_folder = config["global"]["log_folder"]
+    model_dir = ws_home + config["global"]["model_folder"]
+    eval_folder = ws_home + config["global"]["eval_folder"]
+    log_folder = ws_home + config["global"]["log_folder"]
 
     path_check(model_dir)
     path_check(eval_folder)
