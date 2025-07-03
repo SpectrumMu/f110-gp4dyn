@@ -1,45 +1,49 @@
 import torch
 import numpy as np
 import pickle
-from gp_model import MultiOutputExactGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP
-from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
 # from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from linear_operator.settings import max_cg_iterations, cg_tolerance
-# import yaml
-import json
-# import datetime
-import os
-# import logging
+
+import json, os, sys, datetime, logging, time
+import dotenv
+from omegaconf import OmegaConf
+
+from gp_model import MultiOutputExactGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP, MultiOutputSparseHeteroskedasticGP
 from utils.utils import prepare, load_yaml_config
 from utils.logger import setup_logger
-import dotenv
 
 dotenv.load_dotenv()  # automatically loads from .env in current dir
 ws_home = os.getenv("MY_WS_HOME")
 
 def main():
     # === Load configuration ===
-    config = load_yaml_config("./config/config.yaml")
+    config = OmegaConf.load("./config/config.yaml")
+
+    # Apply command-line overrides
+    cli_conf = OmegaConf.from_dotlist(sys.argv[1:])
+    config = OmegaConf.merge(config, cli_conf)
+    config_train = config.gp_train
 
     # Extract Runtime Parameters in config
     path_dict = prepare(config, "train")
-    # Some path
     global DATADIR, MODELDIR, EVALDIR, LOGDIR, TIME_STAMP
-    DATADIR = ws_home + config["global"]["data_folder"]
+    DATADIR = os.path.join(ws_home, config.global_config.data_folder)
     MODELDIR = path_dict["model_dir"]
     EVALDIR = path_dict["eval_folder"]
     LOGDIR = path_dict["log_folder"]
     TIME_STAMP = path_dict["timestamp"]
+
     # Model info
-    IF_NORM = config["gp_train"]["if_norm"]
-    MODEL_TYPE = int(config["gp_train"]["model"]["type"])
-    SPLIT = float(config["gp_train"]["train_test_split"])
-    EPOCH = int(config["gp_train"]["epoch"])
-    LEARNING_RATE = float(config["gp_train"]["model"]["learning_rate"])
-    BATCH_SIZE = int(config["gp_train"]["model"].get("batch_size", 512))
-    PATIENCE = int(config["gp_train"]["model"].get("patience", 50))
+    IF_NORM = config_train.if_norm
+    MODEL_TYPE = config_train.model.type
+    SPLIT = config_train.train_test_split
+    EPOCH = config_train.epoch
+    LEARNING_RATE = config_train.model.learning_rate
+    BATCH_SIZE = config_train.model.get("batch_size", 512)
+    PATIENCE = config_train.model.get("patience", 50)
 
     # Increase max CG iterations and adjust tolerance
     max_cg_iterations(2000)  # Increase the maximum iterations
@@ -56,19 +60,23 @@ def main():
     
     X_train, Y_train, X_test, Y_test, x_scaler, y_scaler = data_load(logger, IF_NORM=IF_NORM, SPLIT=SPLIT)
 
-    # === Train model ===
+    # === Create or Load the Model ===
     gp_model = None
     try:
-        gp_model = create_model(config["gp_train"], X_train, Y_train, device)
-        logger.info(f"Created model of type {config['gp_train']['model']['type']} on device {device}")
+        gp_model = create_model(config.gp_train, X_train, Y_train, device)
+        logger.info(f"Created model of type {config.gp_train.model.type} on device {device}")
     except Exception as e:
         logger.error(f"Failed to create model: {e}")
         return
     logger.info(f"Training model with {X_train.shape[0]} training samples...")
+    
+    # === Train the model ===
+    start_time = time.time()
+    losses = None
     if MODEL_TYPE == 0:
-        gp_model.train(X_train, Y_train, training_iter=EPOCH, logger=logger, lr=LEARNING_RATE)
+        losses = gp_model.train(X_train, Y_train, training_iter=EPOCH, logger=logger, lr=LEARNING_RATE)
     elif MODEL_TYPE == 1:
-        gp_model.train(
+        losses = gp_model.train(
             X_train=X_train,
             Y_train=Y_train,
             num_epochs=EPOCH, 
@@ -76,16 +84,27 @@ def main():
             lr=LEARNING_RATE, 
             logger=logger)
     elif MODEL_TYPE == 2:
-        gp_model.train(
+        losses = gp_model.train(
             X_train=X_train,
             Y_train=Y_train,
             num_epochs=EPOCH, 
             batch_size=BATCH_SIZE,
             lr=LEARNING_RATE, 
             logger=logger)
+    elif MODEL_TYPE == 3:
+        losses = gp_model.train(
+            X_train=X_train,
+            Y_train=Y_train,
+            num_epochs=EPOCH, 
+            batch_size=BATCH_SIZE,
+            lr=LEARNING_RATE, 
+            logger=logger)
+    end_time = time.time()
+    training_time = end_time - start_time
+    logger.info(f"Training completed in {end_time - start_time:.2f} seconds.")
 
     # === Save model ===
-    name = "multioutput" if MODEL_TYPE == 0 else "sparse" if MODEL_TYPE == 1 else "stochastic_variational"
+    name = "multioutput" if MODEL_TYPE == 0 else "sparse" if MODEL_TYPE == 1 else "stochastic_variational" if MODEL_TYPE == 2 else "sparse_heteroskedastic"
     model_filename = f"gp_model_{name}.pkl"
     with open(MODELDIR + model_filename, "wb") as f:
         pickle.dump(gp_model, f)
@@ -119,8 +138,32 @@ def main():
     data_info_filename = "data_info.json"
     with open(MODELDIR + data_info_filename, "w") as f:
         json.dump(data_info, f, indent=4)
+    with open(EVALDIR + data_info_filename, "w") as f:
+        json.dump(data_info, f, indent=4)
 
     logger.info(f"Data info saved to {data_info_filename}")
+
+    # Collect the model configuration and train parameters
+    model_config = {
+        "model_type": name,
+        "learning_rate": LEARNING_RATE,
+        "batch_size": BATCH_SIZE,
+        "patience": PATIENCE,
+        "epoch": EPOCH,
+        "if_norm": IF_NORM,
+        "train_test_split": SPLIT,
+        "device": str(device),
+        "training_time": training_time,
+    }
+    
+    # Save model configuration to a JSON file
+    model_config_filename = "model_config.json"
+    with open(MODELDIR + model_config_filename, "w") as f:
+        json.dump(model_config, f, indent=4)
+    with open(EVALDIR + model_config_filename, "w") as f:
+        json.dump(model_config, f, indent=4)
+        
+    logger.info(f"Model configuration saved to {model_config_filename}")
 
     # # === Predict and Evaluate ===
     Y_pred, Y_std, _, _ = gp_model.predict(X_test)
@@ -138,6 +181,10 @@ def main():
     # === Evaluation ===
     evaluate_error_uncertainty(Y_test, Y_pred, Y_std)
     logger.info("Training and evaluation completed successfully.")
+
+    if losses is not None:
+        plot_losses(losses)
+        logger.info("Training loss plot saved.")
 
     pass
 
@@ -184,7 +231,7 @@ def data_load(logger, IF_NORM=True, SPLIT=0.2):
         raise ValueError("NaN or Inf values found in train_dynamics")
 
     # Assume you only have one friction class, drop the first dim
-    states = train_states[0]    # (N, 2, 5)
+    states = train_states[0]    # (N, 2, 5)config["model"]["type"]
     controls = train_controls[0]  # (N, 1, 2)
     dynamics = train_dynamics[0]  # (N, 1, 5)
 
@@ -238,10 +285,10 @@ def create_model(config, X_train, Y_train, device, load_from_file=None):
             gp_model.to(device)
             return gp_model
 
-    model_type = int(config["model"]["type"])
-    learning_rate = float(config["model"]["learning_rate"])
-    inducing = int(config["model"]["inducing"])
-    independent = bool(config["model"]["independent"])
+    model_type = int(config.model.type)
+    learning_rate = float(config.model.learning_rate)
+    inducing = int(config.model.inducing)
+    independent = bool(config.model.independent)
 
     if model_type == 0:
         return MultiOutputExactGP(X_train, Y_train, device=device)
@@ -260,6 +307,14 @@ def create_model(config, X_train, Y_train, device, load_from_file=None):
             output_dim=Y_train.shape[1],
             num_latents=Y_train.shape[1],
             independent=independent,
+            num_inducing_points=inducing,
+            device=device
+        )
+    elif model_type == 3:
+        return MultiOutputSparseHeteroskedasticGP(
+            input_dim=X_train.shape[1],
+            output_dim=Y_train.shape[1],
+            num_latents=Y_train.shape[1],
             num_inducing_points=inducing,
             device=device
         )
@@ -314,6 +369,26 @@ def evaluate_error_uncertainty(Y_test, Y_pred, Y_std):
     
     pass
 
+def plot_losses(losses):
+    """
+    Plot training losses over epochs.
+    
+    Args:
+        losses (list or np.ndarray): List of loss values per epoch.
+        save_path (str): Path to save the loss plot.
+    """
+    losses = np.array(losses)
+    losses = np.exp(losses)  # Convert log losses back to normal scale if needed
+    plt.figure(figsize=(10, 6))
+    plt.plot(losses, label='Training Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training Loss over Epochs')
+    plt.yscale('log')  # Log scale for better visibility
+    plt.grid(True)
+    plt.legend()
+    plt.savefig(EVALDIR + "training_loss.png")
+    plt.close()
 
 
 if __name__ == "__main__":

@@ -181,12 +181,13 @@ class MultiOutputExactGP:
         best_loss = float('inf')
         patience_counter = 0
         patience_limit = 50
+        losses = []
 
         for epoch in tqdm(range(training_iter), desc="Training ExactMIMOGP"):
             optimizer.zero_grad()
             output = self.model(X_train)
             loss = -mll(output, Y_train)
-            
+
             # Ensure loss is scalar by taking mean if it's a tensor
             if loss.numel() > 1:
                 loss = loss.mean()
@@ -194,6 +195,7 @@ class MultiOutputExactGP:
             if logger is not None:
                 logger.debug(f"Epoch {epoch+1} Loss: {loss.item():.4f}")
             
+            losses.append(loss.item())
             loss.backward()
             optimizer.step()
             
@@ -208,6 +210,8 @@ class MultiOutputExactGP:
                 if logger:
                     logger.info(f"Early stopping at epoch {epoch+1}")
                 break
+
+        return losses
 
     def predict(self, X_test):
         self.model.eval()
@@ -313,6 +317,7 @@ class MultiOutputSparseGP:
         best_loss = float('inf')
         patience_counter = 0
         patience_limit = 50
+        epoch_losses = []
         
         for epoch in tqdm(range(num_epochs), desc="Training MultiOutputSparseGP"):
             epoch_loss = 0.0
@@ -336,6 +341,7 @@ class MultiOutputSparseGP:
             
             avg_epoch_loss = epoch_loss / batch_count
             scheduler.step(avg_epoch_loss)
+            epoch_losses.append(avg_epoch_loss)
             
             if logger:
                 logger.debug(f"Epoch {epoch+1}/{num_epochs} - Avg Loss: {avg_epoch_loss:.4f}")
@@ -351,6 +357,8 @@ class MultiOutputSparseGP:
                 if logger:
                     logger.info(f"Early stopping at epoch {epoch+1}")
                 break
+
+        return epoch_losses
 
     def predict(self, X_test):
         self.model.eval()
@@ -440,7 +448,11 @@ class MultiOutputStochasticVariationalGP:
         train_dataset = torch.utils.data.TensorDataset(X_train, Y_train)
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
+        losses = []
+
         for _ in tqdm(range(num_epochs), desc="Training Stochastic Variational GP"):
+            epoch_loss = 0.0
+            batch_count = 0
             for x_batch, y_batch in train_loader:
                 x_batch = x_batch.to(self.device)
                 y_batch = y_batch.to(self.device)
@@ -448,12 +460,22 @@ class MultiOutputStochasticVariationalGP:
                 optimizer.zero_grad()
                 output = self.model(x_batch)
                 loss = -mll(output, y_batch)
+                epoch_loss += loss.item()
+                batch_count += 1
 
-                if logger is not None:
-                    logger.debug(f"Epoch {_+1} - Loss: {loss:.4f}")
+                # if logger is not None:
+                #     logger.debug(f"Epoch {_+1} - Loss: {loss:.4f}")
 
                 loss.backward()
                 optimizer.step()
+
+            epoch_loss /= batch_count
+            losses.append(epoch_loss)
+
+            if logger is not None:
+                logger.debug(f"Epoch {_+1}/{num_epochs} - Avg Loss: {epoch_loss:.4f}")
+
+        return losses
 
     def predict(self, X_test):
         self.model.eval()
@@ -481,7 +503,10 @@ class SparseHeteroskedasticGPModel(gpytorch.models.ApproximateGP):
         
         variational_strategy = gpytorch.variational.LMCVariationalStrategy(
             gpytorch.variational.VariationalStrategy(
-                self, inducing_points, variational_distribution, learn_inducing_locations=True
+                self, 
+                inducing_points, 
+                variational_distribution, 
+                learn_inducing_locations=True
             ),
             num_tasks=output_dim,
             num_latents=num_latents,
@@ -502,19 +527,25 @@ class SparseHeteroskedasticGPModel(gpytorch.models.ApproximateGP):
         )
         
         # Separate GP for noise modeling
-        noise_inducing_points = torch.rand(num_inducing_points // 4, input_dim)
+        noise_inducing_points = torch.rand(num_latents, num_inducing_points, input_dim)
+        noise_distribution = gpytorch.variational.CholeskyVariationalDistribution(
+            noise_inducing_points.size(-2), batch_shape=torch.Size([num_latents])
+        )
         self.noise_gp = gpytorch.models.ApproximateGP(
             gpytorch.variational.VariationalStrategy(
                 self,
                 noise_inducing_points,
-                gpytorch.variational.CholeskyVariationalDistribution(num_inducing_points // 4),
+                noise_distribution,
                 learn_inducing_locations=True
             )
         )
         
         # Noise GP components (simpler, single output)
-        self.noise_mean = gpytorch.means.ConstantMean()
-        self.noise_covar = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel(ard_num_dims=input_dim))
+        self.noise_mean = gpytorch.means.ConstantMean(batch_shape=torch.Size([num_latents]))
+        self.noise_covar = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel(
+            ard_num_dims=input_dim),
+            batch_shape=torch.Size([num_latents])
+        )
 
     def forward(self, x):
         mean_x = self.mean_module(x)
@@ -571,6 +602,7 @@ class MultiOutputSparseHeteroskedasticGP:
         best_loss = float('inf')
         patience_counter = 0
         patience_limit = 40
+        epoch_losses = []
         
         for epoch in tqdm(range(num_epochs), desc="Training Sparse Heteroskedastic GP"):
             epoch_loss = 0.0
@@ -589,10 +621,12 @@ class MultiOutputSparseHeteroskedasticGP:
                 noise_pred = self.model.noise_forward(x_batch)
                 log_noise_var = noise_pred.mean  # Use mean prediction
                 noise_var = torch.exp(log_noise_var).clamp(min=1e-6)
-                
+
                 # Custom heteroskedastic loss
-                # Negative log likelihood with learned noise
-                residuals = (y_batch.squeeze() - f_pred.mean.t()).pow(2)
+                residuals = (y_batch - f_pred.mean).pow(2)  
+                if noise_var.shape != residuals.shape:
+                    noise_var = noise_var.t()  # Transpose noise_var to match residuals' shape
+
                 het_loss = 0.5 * (residuals / noise_var + torch.log(noise_var)).mean()
                 
                 # Add GP prior terms
@@ -610,9 +644,10 @@ class MultiOutputSparseHeteroskedasticGP:
 
                 total_loss.backward()
                 optimizer.step()
-            
+                        
             avg_epoch_loss = epoch_loss / batch_count
             scheduler.step(avg_epoch_loss)
+            epoch_losses.append(avg_epoch_loss)
             
             if logger:
                 logger.debug(f"Epoch {epoch+1}/{num_epochs} - Avg Loss: {avg_epoch_loss:.4f}")
@@ -628,6 +663,8 @@ class MultiOutputSparseHeteroskedasticGP:
                 if logger:
                     logger.info(f"Early stopping at epoch {epoch+1}")
                 break
+
+        return epoch_losses
 
     def predict(self, X_test):
         self.model.eval()

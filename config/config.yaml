@@ -1,4 +1,4 @@
-global:
+global_config:
   data_folder: "data/kine_rand_uniform/"
   # data_folder: "data/rand_validation/"
   model_folder: "src/gp-ws/models/"
@@ -15,9 +15,9 @@ compare_config:
 gp_train:
   if_norm: true  # Enable normalization for better numerical stability
   train_test_split: 0.8
-  epoch: 1000     # Increase for better convergence
+  epoch: 10     # Increase for better convergence
   model:
-    type: 1
+    type: 3
     learning_rate: 0.01  # Reduce learning rate for more stable training
     inducing: 800        # Increase inducing points for better approximation
     independent: true   # Try correlated outputs first

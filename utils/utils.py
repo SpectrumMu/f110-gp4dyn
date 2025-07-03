@@ -62,9 +62,9 @@ def prepare(config: dict, mode: str, if_compare=0) -> dict:
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     dicts["timestamp"] = timestamp
 
-    model_dir = ws_home + config["global"]["model_folder"]
-    eval_folder = ws_home + config["global"]["eval_folder"]
-    log_folder = ws_home + config["global"]["log_folder"]
+    model_dir = ws_home + config["global_config"]["model_folder"]
+    eval_folder = ws_home + config["global_config"]["eval_folder"]
+    log_folder = ws_home + config["global_config"]["log_folder"]
 
     path_check(model_dir)
     path_check(eval_folder)
@@ -83,6 +83,10 @@ def prepare(config: dict, mode: str, if_compare=0) -> dict:
             model_dir += "sparse/"
         elif config["gp_train"]["model"]["type"] == 2:
             model_dir += "stochastic_variational/"
+        elif config["gp_train"]["model"]["type"] == 3:
+            model_dir += "heteroskedastic/"
+        else:
+            pass
         path_check(model_dir)
         model_dir += f"{timestamp}/"
         path_check(model_dir)
