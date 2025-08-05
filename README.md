@@ -89,6 +89,12 @@ The code support multiple GP models, including:
 - **Sparse Variational GP**: For larger datasets, using inducing points to approximate the full GP.
 - **Stochastic Variational GP**: Not used, just for reference.
 
+The sparse and sv gp model uses the Heteroskedastic Likelihood, which allows the model to learn the noise variance for each output independently.
+- [Heteroskedastic Likelihood](https://gpflow.github.io/GPflow/2.4.0/notebooks/advanced/heteroskedastic.html)
+- [GPyTorch MLL - PredictiveLogLikelihood](https://docs.gpytorch.ai/en/latest/marginal_log_likelihoods.html#predictiveloglikelihood)
+
+The kernel of the GP is Matern kernel with $\nu=2.5$, which is suitable for smooth functions and provides a good balance between flexibility and computational efficiency.
+
 
 
 ### Folder Structure
