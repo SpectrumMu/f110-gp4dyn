@@ -7,11 +7,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from linear_operator.settings import max_cg_iterations, cg_tolerance
 
-import json, os, sys, datetime, logging, time
+import json, os, sys, datetime, logging, time, csv
 import dotenv
 from omegaconf import OmegaConf
 
-from gp_model import MultiOutputExactGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP, MultiOutputSparseHeteroskedasticGP
+from gp_model import MultiOutputExactGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP
 from utils.utils import prepare, load_yaml_config
 from utils.logger import setup_logger
 
@@ -43,7 +43,7 @@ def main():
     EPOCH = config_train.epoch
     LEARNING_RATE = config_train.model.learning_rate
     BATCH_SIZE = config_train.model.get("batch_size", 512)
-    PATIENCE = config_train.model.get("patience", 50)
+    # PATIENCE = config_train.model.get("patience", 50)
 
     # Increase max CG iterations and adjust tolerance
     max_cg_iterations(2000)  # Increase the maximum iterations
@@ -84,14 +84,6 @@ def main():
             lr=LEARNING_RATE, 
             logger=logger)
     elif MODEL_TYPE == 2:
-        losses = gp_model.train(
-            X_train=X_train,
-            Y_train=Y_train,
-            num_epochs=EPOCH, 
-            batch_size=BATCH_SIZE,
-            lr=LEARNING_RATE, 
-            logger=logger)
-    elif MODEL_TYPE == 3:
         losses = gp_model.train(
             X_train=X_train,
             Y_train=Y_train,
@@ -148,7 +140,7 @@ def main():
         "model_type": name,
         "learning_rate": LEARNING_RATE,
         "batch_size": BATCH_SIZE,
-        "patience": PATIENCE,
+        # "patience": PATIENCE,
         "epoch": EPOCH,
         "if_norm": IF_NORM,
         "train_test_split": SPLIT,
@@ -166,17 +158,25 @@ def main():
     logger.info(f"Model configuration saved to {model_config_filename}")
 
     # # === Predict and Evaluate ===
+    start_time = time.time()
     Y_pred, Y_std, _, _ = gp_model.predict(X_test)
+    end_time = time.time()
+    eval_time = end_time - start_time
+    logger.info(f"Prediction completed in {end_time - start_time:.2f} seconds.")
 
-    if IF_NORM:
-        # Restore predictions to original scale
-        Y_pred = y_scaler.inverse_transform(Y_pred.numpy())
-        Y_std  = y_scaler.inverse_transform(Y_std.numpy())
-        Y_test = y_scaler.inverse_transform(Y_test.numpy())
-    else:
-        Y_pred = Y_pred.numpy()
-        Y_std  = Y_std.numpy()
-        Y_test = Y_test.numpy()
+    # if IF_NORM:
+    #     # Restore predictions to original scale
+    #     Y_pred = y_scaler.inverse_transform(Y_pred.numpy())
+    #     Y_std  = y_scaler.inverse_transform(Y_std.numpy())
+    #     Y_test = y_scaler.inverse_transform(Y_test.numpy())
+    # else:
+    #     Y_pred = Y_pred.numpy()
+    #     Y_std  = Y_std.numpy()
+    #     Y_test = Y_test.numpy()
+
+    Y_pred = Y_pred.numpy()
+    Y_std  = Y_std.numpy()
+    Y_test = Y_test.numpy()
 
     # === Evaluation ===
     evaluate_error_uncertainty(Y_test, Y_pred, Y_std)
@@ -185,6 +185,48 @@ def main():
     if losses is not None:
         plot_losses(losses)
         logger.info("Training loss plot saved.")
+
+    # Error analysis
+    error_analysis(Y_test, Y_pred, Y_std, logger)
+    logger.info("Error analysis completed.")
+
+
+    # Test the predictions time 
+    # for i in range(10):
+    #     _, _, _, _ = gp_model.predict(X_test[i:i+1])
+    
+    # start_time = time.time()
+    # for i in range(X_test.shape[0]):
+    #     _, _, _, _ = gp_model.predict(X_test[i:i+1])
+    # end_time = time.time()
+    # prediction_time = end_time - start_time
+    # logger.info(f"Prediction time for {X_test.shape[0]} samples: {prediction_time:.2f} seconds.")
+
+
+    # Save the data info to csv
+    csv_filepath = "/home/x_lab/workspace/roboracer/src/gp-ws/training_results.csv"
+    # csv_filename = "training_results.csv"
+    training_info = {
+        "lr": config.gp_train.model.learning_rate,
+        "inducing": config.gp_train.model.inducing,
+        "independent": config.gp_train.model.independent,
+        "model_type": config.gp_train.model.type,
+        "epoch": config.gp_train.epoch,
+        "if_norm": config.gp_train.if_norm,
+        "training_time_sec": training_time,
+        "model_dir": MODELDIR,
+        "eval_dir": EVALDIR,
+        "eval_time_sec": prediction_time
+        }
+
+    file_exists = os.path.isfile(csv_filepath)
+    with open(csv_filepath, mode="a", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=training_info.keys())
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(training_info)
+
+    logger.info(f"Training info appended to {csv_filepath}")
 
     pass
 
@@ -215,6 +257,8 @@ def data_load(logger, IF_NORM=True, SPLIT=0.2):
     train_states = train_data['train_states']
     train_controls = train_data['train_controls']
     train_dynamics = train_data['train_dynamics']
+    # This modification is made on the nominal + error dynamics, this is the model diff
+    train_dynamics = train_data['train_model_diff']
 
     logger.info(f"train_states shape: {train_states.shape}")
     logger.info(f"train_controls shape: {train_controls.shape}")
@@ -235,10 +279,10 @@ def data_load(logger, IF_NORM=True, SPLIT=0.2):
     controls = train_controls[0]  # (N, 1, 2)
     dynamics = train_dynamics[0]  # (N, 1, 5)
 
-    xk = states[:, 0, :]     # (N, 5)
+    xk = states[:, 0, :]#[:, [1, 2, 3]]     # (N, 3)
     uk = controls[:, 0, :]   # (N, 2)
-    xk1 = states[:, 1, :]    # (N, 5)
-    yk = dynamics[:, 0, :]  # (N, 5)
+    xk1 = states[:, 1, :]#[:, [1, 2, 3]]    # (N, 3)
+    yk = dynamics[:, 0, :]  # (N, 3)
 
     X_train = np.concatenate([xk, uk], axis=-1)  # (N, 7)
     Y_train = yk  # (N, 5), select columns 0, 1, 3, 4
@@ -307,14 +351,6 @@ def create_model(config, X_train, Y_train, device, load_from_file=None):
             output_dim=Y_train.shape[1],
             num_latents=Y_train.shape[1],
             independent=independent,
-            num_inducing_points=inducing,
-            device=device
-        )
-    elif model_type == 3:
-        return MultiOutputSparseHeteroskedasticGP(
-            input_dim=X_train.shape[1],
-            output_dim=Y_train.shape[1],
-            num_latents=Y_train.shape[1],
             num_inducing_points=inducing,
             device=device
         )
@@ -390,6 +426,28 @@ def plot_losses(losses):
     plt.savefig(EVALDIR + "training_loss.png")
     plt.close()
 
+def error_analysis(Y_test, Y_pred, Y_std, logger):
+    """
+    Perform error analysis on the model's predictions.
+    
+    Args:
+        Y_test (torch.Tensor): True output values.
+        Y_pred (torch.Tensor): Predicted output values.
+        Y_std (torch.Tensor): Predicted standard deviations (uncertainty).
+        
+    Returns:
+        None
+    """
+    num_outputs = Y_test.shape[-1]
+    errors = np.abs(Y_test - Y_pred)
+
+    mae = np.mean(errors, axis=0)
+    rmse = np.sqrt(np.mean((Y_test - Y_pred) ** 2, axis=0))
+    r2 = 1 - np.sum((Y_test - Y_pred) ** 2, axis=0) / np.sum((Y_test - np.mean(Y_test, axis=0)) ** 2)
+
+    logger.info(f"MAE: {mae}")
+    logger.info(f"RMSE: {rmse}")
+    logger.info(f"R2: {r2}")
 
 if __name__ == "__main__":
     main()

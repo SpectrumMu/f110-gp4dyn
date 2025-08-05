@@ -1,3 +1,4 @@
+# Configure the path
 global_config:
   data_folder: "data/kine_rand_uniform/"
   # data_folder: "data/rand_validation/"
@@ -5,6 +6,7 @@ global_config:
   eval_folder: "src/gp-ws/evaluate_out/"
   log_folder: "src/gp-ws/logs/"
 
+# Not used in current version, for `gpdyn_baseline.py`, might have bugs
 compare_config:
   if_norm: True
   c: 3000
@@ -13,24 +15,24 @@ compare_config:
   learning_rate: 0.1
   
 gp_train:
-  if_norm: true  # Enable normalization for better numerical stability
+  if_norm: true             # If true, normalize the data
   train_test_split: 0.8
-  epoch: 10     # Increase for better convergence
+  epoch: 30                 
   model:
-    type: 3
-    learning_rate: 0.01  # Reduce learning rate for more stable training
-    inducing: 800        # Increase inducing points for better approximation
-    independent: true   # Try correlated outputs first
-    batch_size: 256      # Reduce batch size for more stable gradients
-    patience: 50         # Early stopping patience
-    kernel_type: "composite"  # Use composite kernel (Matern + RBF + Linear)
+    type: 1                 # 0: Exact GP 1: Sparse GP, 2: SV GP   
+    learning_rate: 0.01 
+    inducing: 1000        
+    independent: true       # If true, use independent GP for each output
+    batch_size: 256      
 
+# Not used in current version, for `gpdyn_eval_eu.py`, might have bugs
 gp_eval:
   model_dir: "src/gp-ws/models/sparse/20250702_190840/"
   model_type: 1
   if_norm: true
   eval_type: 0
 
+# Not used
 eval_sim:
   model_dir: "src/gp-ws/models/sparse/20250627_154019/"
   model_type: 1

@@ -122,3 +122,4 @@ Simple_GP*
 *.upb
 *.mw
 latex.out/
+training_results.csv
