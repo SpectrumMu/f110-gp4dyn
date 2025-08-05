@@ -17,11 +17,11 @@ compare_config:
 gp_train:
   if_norm: true             # If true, normalize the data
   train_test_split: 0.8
-  epoch: 30                 
+  epoch: 70                 
   model:
     type: 1                 # 0: Exact GP 1: Sparse GP, 2: SV GP   
     learning_rate: 0.01 
-    inducing: 1000        
+    inducing: 512        
     independent: true       # If true, use independent GP for each output
     batch_size: 256      
 

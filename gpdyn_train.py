@@ -18,6 +18,20 @@ from utils.logger import setup_logger
 dotenv.load_dotenv()  # automatically loads from .env in current dir
 ws_home = os.getenv("MY_WS_HOME")
 
+class SymmetricMinMaxScaler:
+    def fit(self, X):
+        self.max_abs_ = np.max(np.abs(X), axis=0, keepdims=True)
+        return self
+
+    def transform(self, X):
+        return 0.5 * (X / self.max_abs_) + 0.5
+
+    def fit_transform(self, X):
+        return self.fit(X).transform(X)
+
+    def inverse_transform(self, X_scaled):
+        return (X_scaled - 0.5) * 2 * self.max_abs_
+
 def main():
     # === Load configuration ===
     config = OmegaConf.load("./config/config.yaml")
@@ -291,8 +305,8 @@ def data_load(logger, IF_NORM=True, SPLIT=0.2):
     logger.info(f"Y_train shape: {Y_train.shape}")
 
     # Normalize X_train and Y_train
-    x_scaler = MinMaxScaler()
-    y_scaler = MinMaxScaler()
+    x_scaler = SymmetricMinMaxScaler()
+    y_scaler = SymmetricMinMaxScaler()
 
     if IF_NORM:
         X_train = x_scaler.fit_transform(X_train)
@@ -373,19 +387,22 @@ def evaluate_error_uncertainty(Y_test, Y_pred, Y_std):
     num_outputs = Y_test.shape[-1]
     fig, axes = plt.subplots(2, num_outputs, figsize=(6 * num_outputs, 10))  # Removed sharey='row'
 
+    name_variable = ["steering speed", "a", "angular accel", "dot slip angle"]
+
     for i in range(num_outputs):
         y_true = Y_test[:, i]
         y_pred = Y_pred[:, i]
         y_uncert = Y_std[:, i]
         error = np.abs(y_true - y_pred)
+        error_significant_level = np.clip(error/ np.abs(y_true), 0, 1)
         # normalized_error = error / y_uncert
 
         # Top row: normalized error histogram
         ax_hist = axes[0, i] if num_outputs > 1 else axes[0]
-        ax_hist.hist(error, bins=30, alpha=0.7)
-        ax_hist.set_xlabel("Error")
+        ax_hist.hist(error_significant_level, bins=30, alpha=0.7)
+        ax_hist.set_xlabel("Error Significant Level")
         ax_hist.set_ylabel("Count")
-        ax_hist.set_title(f"Output {i}: Error Hist")
+        ax_hist.set_title(f"{name_variable[i]}: Error Significant Level Hist")
         ax_hist.grid(True)
 
         # Bottom row: scatter plot (absolute error vs. uncertainty)
@@ -393,7 +410,7 @@ def evaluate_error_uncertainty(Y_test, Y_pred, Y_std):
         ax_scatter.scatter(y_uncert, error, alpha=0.5)
         ax_scatter.set_xlabel("Predicted Stddev (Uncertainty)")
         ax_scatter.set_ylabel("Absolute Error")
-        ax_scatter.set_title(f"Output {i}: Error vs Uncertainty")
+        ax_scatter.set_title(f"{name_variable[i]}: Error vs Uncertainty")
         ax_scatter.grid(True)
         
         # ax_scatter.set_xlim(left=0)
