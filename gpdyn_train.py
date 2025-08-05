@@ -192,15 +192,15 @@ def main():
 
 
     # Test the predictions time 
-    # for i in range(10):
-    #     _, _, _, _ = gp_model.predict(X_test[i:i+1])
+    for i in range(10):
+        _, _, _, _ = gp_model.predict(X_test[i:i+1])
     
-    # start_time = time.time()
-    # for i in range(X_test.shape[0]):
-    #     _, _, _, _ = gp_model.predict(X_test[i:i+1])
-    # end_time = time.time()
-    # prediction_time = end_time - start_time
-    # logger.info(f"Prediction time for {X_test.shape[0]} samples: {prediction_time:.2f} seconds.")
+    start_time = time.time()
+    for i in range(X_test.shape[0]):
+        _, _, _, _ = gp_model.predict(X_test[i:i+1])
+    end_time = time.time()
+    prediction_time = end_time - start_time
+    logger.info(f"Prediction time for {X_test.shape[0]} samples: {prediction_time:.2f} seconds.")
 
 
     # Save the data info to csv
