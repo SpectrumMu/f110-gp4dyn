@@ -404,7 +404,7 @@ def evaluate_error_uncertainty(Y_test, Y_pred, Y_std, Y_scaler=None):
     num_outputs = Y_test.shape[-1]
     fig, axes = plt.subplots(2, num_outputs, figsize=(6 * num_outputs, 10))  # Removed sharey='row'
 
-    name_variable = ["steering speed", "a", "angular accel", "dot slip angle"]
+    name_variable = ["s_x", "s_y", "steering speed", "a", "angular vel", "angular accel", "dot slip angle"]
 
     Y_test_orig, Y_pred_orig, Y_std_orig = Y_test, Y_pred, Y_std
     if Y_scaler is not None:
