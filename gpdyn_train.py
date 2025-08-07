@@ -4,7 +4,7 @@ import pickle
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 # from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+# from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from linear_operator.settings import max_cg_iterations, cg_tolerance
 
 import json, os, sys, datetime, logging, time, csv
@@ -12,25 +12,11 @@ import dotenv
 from omegaconf import OmegaConf
 
 from gp_model import MultiOutputExactGP, MultiOutputSparseGP, MultiOutputStochasticVariationalGP
-from utils.utils import prepare, load_yaml_config
+from utils.utils import prepare, load_yaml_config, SymmetricMinMaxScaler
 from utils.logger import setup_logger
 
 dotenv.load_dotenv()  # automatically loads from .env in current dir
 ws_home = os.getenv("MY_WS_HOME")
-
-class SymmetricMinMaxScaler:
-    def fit(self, X):
-        self.max_abs_ = np.max(np.abs(X), axis=0, keepdims=True)
-        return self
-
-    def transform(self, X):
-        return 0.5 * (X / self.max_abs_) + 0.5
-
-    def fit_transform(self, X):
-        return self.fit(X).transform(X)
-
-    def inverse_transform(self, X_scaled):
-        return (X_scaled - 0.5) * 2 * self.max_abs_
 
 def main():
     # === Load configuration ===
@@ -43,12 +29,14 @@ def main():
 
     # Extract Runtime Parameters in config
     path_dict = prepare(config, "train")
-    global DATADIR, MODELDIR, EVALDIR, LOGDIR, TIME_STAMP
+    global DATADIR, MODELDIR, EVALDIR, LOGDIR, TIME_STAMP, MODEL_LOAD_PATH, IF_LOAD
     DATADIR = os.path.join(ws_home, config.global_config.data_folder)
     MODELDIR = path_dict["model_dir"]
     EVALDIR = path_dict["eval_folder"]
     LOGDIR = path_dict["log_folder"]
     TIME_STAMP = path_dict["timestamp"]
+    MODEL_LOAD_PATH = config_train.model.get("load_path", None)
+    IF_LOAD = MODEL_LOAD_PATH is not None and os.path.exists(MODEL_LOAD_PATH)
 
     # Model info
     IF_NORM = config_train.if_norm
@@ -57,6 +45,8 @@ def main():
     EPOCH = config_train.epoch
     LEARNING_RATE = config_train.model.learning_rate
     BATCH_SIZE = config_train.model.get("batch_size", 512)
+    IF_FULL_TEST = config_train.get("full_test", False)
+
     # PATIENCE = config_train.model.get("patience", 50)
 
     # Increase max CG iterations and adjust tolerance
@@ -77,7 +67,7 @@ def main():
     # === Create or Load the Model ===
     gp_model = None
     try:
-        gp_model = create_model(config.gp_train, X_train, Y_train, device)
+        gp_model = create_model(config.gp_train, X_train, Y_train, device, logger=logger)
         logger.info(f"Created model of type {config.gp_train.model.type} on device {device}")
     except Exception as e:
         logger.error(f"Failed to create model: {e}")
@@ -111,16 +101,17 @@ def main():
 
     # === Save model ===
     name = "multioutput" if MODEL_TYPE == 0 else "sparse" if MODEL_TYPE == 1 else "stochastic_variational" if MODEL_TYPE == 2 else "sparse_heteroskedastic"
-    model_filename = f"gp_model_{name}.pkl"
-    with open(MODELDIR + model_filename, "wb") as f:
-        pickle.dump(gp_model, f)
+    # model_filename = f"gp_model_{name}.pkl"
+    # with open(MODELDIR + model_filename, "wb") as f:
+    #     pickle.dump(gp_model, f)
+    gp_model.save(MODELDIR)
 
     # Save scalers
     scaler_filename = "scaler.pkl"
     with open(MODELDIR + scaler_filename, "wb") as f:
         pickle.dump({'x_scaler': x_scaler, 'y_scaler': y_scaler}, f)
 
-    logger.info(f"Model saved to {model_filename}")
+    logger.info(f"Model saved to {MODELDIR}")
     logger.info(f"Scalers saved to {scaler_filename}")
 
     # Collect data information
@@ -136,7 +127,7 @@ def main():
         "normalization": IF_NORM,
         "timestamp": TIME_STAMP,
         "model_type": name,
-        "model_filename": model_filename,
+        "model_filename": MODELDIR + "model.pth",
         "scaler_filename": scaler_filename
     }
 
@@ -206,15 +197,17 @@ def main():
 
 
     # Test the predictions time 
-    for i in range(10):
-        _, _, _, _ = gp_model.predict(X_test[i:i+1])
-    
-    start_time = time.time()
-    for i in range(X_test.shape[0]):
-        _, _, _, _ = gp_model.predict(X_test[i:i+1])
-    end_time = time.time()
-    prediction_time = end_time - start_time
-    logger.info(f"Prediction time for {X_test.shape[0]} samples: {prediction_time:.2f} seconds.")
+    prediction_time = -1.0
+    if IF_FULL_TEST:
+        for i in range(10):
+            _, _, _, _ = gp_model.predict(X_test[i:i+1])
+        
+        start_time = time.time()
+        for i in range(X_test.shape[0]):
+            _, _, _, _ = gp_model.predict(X_test[i:i+1])
+        end_time = time.time()
+        prediction_time = end_time - start_time
+        logger.info(f"Prediction time for {X_test.shape[0]} samples: {prediction_time:.2f} seconds.")
 
 
     # Save the data info to csv
@@ -308,9 +301,24 @@ def data_load(logger, IF_NORM=True, SPLIT=0.2):
     x_scaler = SymmetricMinMaxScaler()
     y_scaler = SymmetricMinMaxScaler()
 
-    if IF_NORM:
+    if IF_NORM and not IF_LOAD:
         X_train = x_scaler.fit_transform(X_train)
         Y_train = y_scaler.fit_transform(Y_train)
+    elif IF_NORM and IF_LOAD:
+        # Load the scalers from the model directory
+        scaler_path = MODEL_LOAD_PATH + "scaler.pkl"
+        if os.path.exists(scaler_path):
+            with open(scaler_path, "rb") as f:
+                scalers = pickle.load(f)
+                x_scaler = scalers['x_scaler']
+                y_scaler = scalers['y_scaler']
+            X_train = x_scaler.transform(X_train)
+            Y_train = y_scaler.transform(Y_train)
+        else:
+            logger.warning("Scaler file not found, skipping normalization.")
+    else:
+        logger.info("Normalization is disabled, using raw data.")
+
 
     # Convert to PyTorch tensors
     X_train = torch.tensor(X_train, dtype=torch.float32)
@@ -323,7 +331,7 @@ def data_load(logger, IF_NORM=True, SPLIT=0.2):
 
     return X_train, Y_train, X_test, Y_test, x_scaler, y_scaler
 
-def create_model(config, X_train, Y_train, device, load_from_file=None):
+def create_model(config, X_train, Y_train, device, logger=None):
     """
     Create a GP model based on the specified type.
     
@@ -337,21 +345,23 @@ def create_model(config, X_train, Y_train, device, load_from_file=None):
     Returns:
         gp_model: The created or loaded GP model.
     """
-    if load_from_file:
-        with open(load_from_file, "rb") as f:
-            gp_model = pickle.load(f)
-            gp_model.to(device)
-            return gp_model
+    # if load_from_file:
+    #     with open(load_from_file, "rb") as f:
+    #         gp_model = pickle.load(f)
+    #         gp_model.to(device)
+    #         return gp_model
 
     model_type = int(config.model.type)
     learning_rate = float(config.model.learning_rate)
     inducing = int(config.model.inducing)
     independent = bool(config.model.independent)
 
+    model = None
+
     if model_type == 0:
-        return MultiOutputExactGP(X_train, Y_train, device=device)
+        model = MultiOutputExactGP(X_train, Y_train, device=device)
     elif model_type == 1:
-        return MultiOutputSparseGP(
+        model = MultiOutputSparseGP(
             input_dim=X_train.shape[1],
             output_dim=Y_train.shape[1],
             num_latents=Y_train.shape[1],
@@ -360,7 +370,7 @@ def create_model(config, X_train, Y_train, device, load_from_file=None):
             device=device
         )
     elif model_type == 2:
-        return MultiOutputStochasticVariationalGP(
+        model = MultiOutputStochasticVariationalGP(
             input_dim=X_train.shape[1],
             output_dim=Y_train.shape[1],
             num_latents=Y_train.shape[1],
@@ -370,8 +380,15 @@ def create_model(config, X_train, Y_train, device, load_from_file=None):
         )
     else:
         raise ValueError("Invalid model type specified.")
+    
+    if IF_LOAD:
+        model.load(MODEL_LOAD_PATH)
+        if logger:
+            logger.info(f"Loaded model from {MODEL_LOAD_PATH}")
 
-def evaluate_error_uncertainty(Y_test, Y_pred, Y_std):
+    return model
+
+def evaluate_error_uncertainty(Y_test, Y_pred, Y_std, Y_scaler=None):
     """
     Evaluate the model's predictions against the true values.
     
@@ -389,12 +406,22 @@ def evaluate_error_uncertainty(Y_test, Y_pred, Y_std):
 
     name_variable = ["steering speed", "a", "angular accel", "dot slip angle"]
 
+    Y_test_orig, Y_pred_orig, Y_std_orig = Y_test, Y_pred, Y_std
+    if Y_scaler is not None:
+        Y_test_orig = Y_scaler.inverse_transform(Y_test_orig)
+        Y_pred_orig = Y_scaler.inverse_transform(Y_pred_orig)
+        Y_std_orig = Y_scaler.inverse_transform(Y_std_orig)
+
+    Error = np.abs(Y_test_orig - Y_pred_orig)
+    Error_scale = np.clip(Error / np.abs(Y_test_orig), 0, 1)
+
     for i in range(num_outputs):
         y_true = Y_test[:, i]
         y_pred = Y_pred[:, i]
         y_uncert = Y_std[:, i]
         error = np.abs(y_true - y_pred)
-        error_significant_level = np.clip(error/ np.abs(y_true), 0, 1)
+        # error_significant_level = np.clip(error/ np.abs(y_true), 0, 1)
+        error_significant_level = Error_scale[:, i]
         # normalized_error = error / y_uncert
 
         # Top row: normalized error histogram

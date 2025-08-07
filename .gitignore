@@ -123,3 +123,4 @@ Simple_GP*
 *.mw
 latex.out/
 training_results.csv
+test.py

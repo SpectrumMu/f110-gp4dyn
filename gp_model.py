@@ -251,6 +251,26 @@ class MultiOutputSparseGP:
 
         return preds, stds, lower, upper
 
+    def save(self, filepath):
+        self.model.eval()
+        self.likelihood.eval()
+
+        with torch.no_grad():
+            torch.save(self.model.state_dict(), filepath + "model.pth")
+            torch.save(self.likelihood.state_dict(), filepath + "likelihood.pth")
+
+    def load(self, filepath):
+        self.model.eval()
+        self.likelihood.eval()
+
+        self.model.load_state_dict(torch.load(filepath + "model.pth"))
+        self.likelihood.load_state_dict(torch.load(filepath + "likelihood.pth"))
+
+        self.model.to(self.device)
+        self.likelihood.to(self.device)
+
+        # print(f"Loaded MultiOutputSparseGP from {filepath}")
+
 class StochasticVariationalGP(gpytorch.models.ApproximateGP):
     def __init__(self, input_dim, output_dim, num_latents, independent=False, num_inducing_points=256):
         # Different inducing points for each latent function

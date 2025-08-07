@@ -2,6 +2,7 @@ import os
 import yaml
 import datetime
 import dotenv
+import numpy as np
 
 dotenv.load_dotenv()  # automatically loads from .env in current dir
 ws_home = os.getenv("MY_WS_HOME")
@@ -106,3 +107,16 @@ def prepare(config: dict, mode: str, if_compare=0) -> dict:
 
     return dicts
 
+class SymmetricMinMaxScaler:
+    def fit(self, X):
+        self.max_abs_ = np.max(np.abs(X), axis=0, keepdims=True)
+        return self
+
+    def transform(self, X):
+        return 0.5 * (X / self.max_abs_) + 0.5
+
+    def fit_transform(self, X):
+        return self.fit(X).transform(X)
+
+    def inverse_transform(self, X_scaled):
+        return (X_scaled - 0.5) * 2 * self.max_abs_
